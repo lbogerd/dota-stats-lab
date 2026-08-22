@@ -34,7 +34,7 @@ Initialize the external volumes, then start the two permanent services:
 docker compose up --detach --build --wait web parser-worker
 ```
 
-The web app can submit one ingestion at a time, show current and recent job status, browse stored matches and immutable extractions, execute bounded read-only SQL, and manage saved `.sql` files.
+The web app can submit one ingestion at a time, show current and recent job status, browse stored matches and immutable extractions, execute bounded read-only SQL, and manage saved `.sql` files. The saved-query editor completes the active DuckDB project schemas, tables, views, typed columns, and project macros. Qualify columns with a relation or alias, such as `r.sequence`, when you need column completion in clauses such as `ORDER BY`.
 
 Saved queries live in the external `dota-stats-queries` volume and survive web-container replacement. Volume durability is not a backup; download important query files or copy the volume through your normal backup process.
 
@@ -68,7 +68,7 @@ docker compose up --detach --build --wait web parser-worker
 docker compose run --rm --no-deps e2e
 ```
 
-The Node test image covers IDs, manifests, checksums, bounded replay retries, locking, migrations, saved-query safety, job recovery, read-only SQL restrictions, atomic rollback, idempotency, and both analysis queries. The Playwright image checks the main workflow at a phone-sized viewport against the healthy web service. The parser image build compiles and tests the Clarity exporter. A real replay fixture is intentionally kept outside Git.
+The Node test image covers IDs, manifests, checksums, bounded replay retries, locking, migrations, saved-query safety, SQL catalog metadata, job recovery, read-only SQL restrictions, atomic rollback, idempotency, and both analysis queries. The Playwright image checks the main workflow and touch-friendly SQL completion at a phone-sized viewport against the healthy web service. The parser image build compiles and tests the Clarity exporter. A real replay fixture is intentionally kept outside Git.
 
 The parser and loader run without network access and with reduced container privileges. These controls reduce exposure; Docker is not a complete security boundary.
 
