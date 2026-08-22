@@ -57,7 +57,7 @@ export function AppShell() {
             <div className="mt-3 flex items-end justify-between">
               <div>
                 <div className="text-sm font-semibold">Ready</div>
-                <div className="mt-0.5 text-[0.7rem] text-white/42">5 extractions</div>
+                <div className="mt-0.5 text-[0.7rem] text-white/42">DuckDB connected</div>
               </div>
               <Database size={18} className="text-white/25" />
             </div>

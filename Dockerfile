@@ -14,7 +14,18 @@ COPY tests ./tests
 RUN pnpm build
 
 FROM node-build AS test
-RUN pnpm test
+RUN pnpm test && pnpm test:web
+
+
+FROM mcr.microsoft.com/playwright:v1.62.1-noble AS e2e
+
+WORKDIR /work
+COPY --from=node-build /build/package.json ./package.json
+COPY --from=node-build /build/node_modules ./node_modules
+COPY playwright.config.ts ./playwright.config.ts
+COPY e2e ./e2e
+
+CMD ["./node_modules/.bin/playwright", "test"]
 
 FROM node-build AS node-production
 RUN pnpm prune --prod
@@ -25,6 +36,9 @@ FROM gradle:8.14.3-jdk21 AS parser-build
 WORKDIR /build/parser
 COPY parser/ ./
 RUN gradle --no-daemon clean test shadowJar
+
+
+FROM eclipse-temurin:21.0.8_9-jre AS java-runtime
 
 
 FROM node:22.18.0-bookworm-slim AS app
@@ -53,11 +67,32 @@ USER 10001:10001
 ENTRYPOINT ["node", "/app/dist/src/cli/index.js"]
 
 
+FROM app AS parser-worker
+
+ENV JAVA_HOME=/opt/java/openjdk \
+    PATH="/opt/java/openjdk/bin:${PATH}" \
+    JOBS_ROOT=/work/staging/jobs \
+    PARSER_JAR=/app/parser.jar \
+    PARSER_WORKER_TIMEOUT_MS=1860000 \
+    PARSER_MAX_INPUT_BYTES=2147483648 \
+    PARSER_MAX_OUTPUT_BYTES=12884901888 \
+    PARSER_TIMEOUT_SECONDS=1800 \
+    PARSER_MAX_RECORDS=50000000 \
+    CHECKPOINT_INTERVAL_SECONDS=30
+
+COPY --from=java-runtime /opt/java/openjdk /opt/java/openjdk
+COPY --from=parser-build --chown=dota:dota /build/parser/build/libs/dota-replay-exporter.jar /app/parser.jar
+
+CMD ["parser-worker"]
+
+
 FROM node:22.18.0-bookworm-slim AS web
 
 ENV NODE_ENV=production \
     REPLAY_ROOT=/data/replays \
     STAGING_ROOT=/work/staging \
+    JOBS_ROOT=/work/staging/jobs \
+    MIGRATION_ROOT=/app/migrations \
     WAREHOUSE_PATH=/data/warehouse/dota.duckdb \
     QUERY_FILES_ROOT=/data/queries \
     HOST=0.0.0.0 \
@@ -72,13 +107,15 @@ RUN groupadd --gid 10001 dota \
 COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
 COPY --from=node-production --chown=dota:dota /build/node_modules ./node_modules
 COPY --from=node-production --chown=dota:dota /build/dist ./dist
+COPY --from=node-production --chown=dota:dota /build/src/db/migrations ./migrations
+COPY --from=node-production --chown=dota:dota /build/src/db/queries ./queries
 
 USER 10001:10001
 EXPOSE 3000
 CMD ["./node_modules/.bin/srvx", "--prod", "--host=0.0.0.0", "--port=3000", "--static=../client", "--entry=dist/server/server.js"]
 
 
-FROM eclipse-temurin:21.0.8_9-jre AS parser
+FROM java-runtime AS parser
 
 ENV REPLAY_ROOT=/data/replays \
     STAGING_ROOT=/work/staging \

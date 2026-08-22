@@ -7,6 +7,17 @@ services:
       target: test
     image: dota-stats-lab-test:local
 
+  e2e:
+    build:
+      context: .
+      target: e2e
+    image: dota-stats-lab-e2e:local
+    environment:
+      PLAYWRIGHT_BASE_URL: http://web:3000
+    depends_on:
+      web:
+        condition: service_healthy
+
   web:
     build:
       context: .
@@ -65,6 +76,34 @@ services:
     image: dota-stats-lab-parser:local
     command: []
     init: true
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 4g
+    cpus: 2.0
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=2304m,mode=1777
+    volumes:
+      - type: volume
+        source: replays
+        target: /data/replays
+        read_only: true
+      - type: volume
+        source: staging
+        target: /work/staging
+
+  parser-worker:
+    build:
+      context: .
+      target: parser-worker
+    image: dota-stats-lab-parser-worker:local
+    command: ["parser-worker"]
+    init: true
+    restart: unless-stopped
     network_mode: none
     read_only: true
     cap_drop:

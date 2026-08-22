@@ -48,7 +48,7 @@ function QueryEditorPage() {
   });
   const renameMutation = useMutation({
     mutationFn: () => renameQuery(queryName, newName),
-    onSuccess: async (next) => { await client.invalidateQueries({ queryKey: queryKeys.queries }); await navigate({ to: "/queries/$queryName", params: { queryName: next.name } }); },
+    onSuccess: async (next) => { setRenaming(false); await client.invalidateQueries({ queryKey: queryKeys.queries }); await navigate({ to: "/queries/$queryName", params: { queryName: next.name } }); },
     onError: (cause) => setRenameError(cause instanceof Error ? cause.message : "Could not rename query."),
   });
   const deleteMutation = useMutation({

@@ -10,7 +10,7 @@ export const Route = createFileRoute("/queries/")({
   component: QueriesPage,
 });
 
-const starterSql = "SELECT *\nFROM catalog.extractions\nORDER BY created_at DESC\nLIMIT 100;";
+const starterSql = "SELECT *\nFROM catalog.extractions\nORDER BY started_at DESC\nLIMIT 100;";
 
 function QueriesPage() {
   const { data: queries } = useSuspenseQuery(savedQueriesQuery());

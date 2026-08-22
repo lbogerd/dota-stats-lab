@@ -3,6 +3,7 @@ import path from "node:path";
 export const paths = {
   replayRoot: process.env.REPLAY_ROOT ?? "/data/replays",
   stagingRoot: process.env.STAGING_ROOT ?? "/work/staging",
+  jobsRoot: process.env.JOBS_ROOT ?? path.join(process.env.STAGING_ROOT ?? "/work/staging", "jobs"),
   warehousePath: process.env.WAREHOUSE_PATH ?? "/data/warehouse/dota.duckdb",
   migrationRoot: process.env.MIGRATION_ROOT ?? "/app/migrations",
 };

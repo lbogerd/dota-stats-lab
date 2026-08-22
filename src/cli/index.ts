@@ -35,7 +35,12 @@ async function main(): Promise<void> {
     await migrateOnly();
     return;
   }
-  throw new Error("Usage: cli/index.js fetch|check|load|sql|migrate");
+  if (command === "parser-worker") {
+    const { runParserWorker } = await import("../jobs/parser-worker-main.js");
+    await runParserWorker();
+    return;
+  }
+  throw new Error("Usage: cli/index.js fetch|check|load|sql|migrate|parser-worker");
 }
 
 main().catch((error: unknown) => {

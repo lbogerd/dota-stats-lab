@@ -16,7 +16,8 @@
     "check": "pnpm check:cli && pnpm check:web",
     "check:cli": "tsc -p tsconfig.json --noEmit",
     "check:web": "tsc -p tsconfig.web.json --noEmit",
-    "test:web": "vitest run --config vitest.config.ts"
+    "test:web": "vitest run --config vitest.config.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/lang-sql": "6.10.0",
