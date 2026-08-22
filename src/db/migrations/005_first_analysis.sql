@@ -21,7 +21,7 @@ QUALIFY row_number() OVER (
 ) = 1;
 
 CREATE OR REPLACE MACRO analysis.match_summary(requested_match_id) AS TABLE
-WITH selected_entity AS (
+WITH selected_entity AS MATERIALIZED (
     SELECT
         extraction.match_id,
         extraction.extraction_id,
@@ -34,11 +34,11 @@ WITH selected_entity AS (
     ORDER BY entity.sequence
     LIMIT 1
 ),
-selected_checkpoint AS (
+selected_checkpoint_key AS MATERIALIZED (
     SELECT
-        entity.match_id,
-        entity.extraction_id,
-        checkpoint.properties
+        checkpoint.extraction_id,
+        checkpoint.entity_instance_id,
+        checkpoint.sequence
     FROM selected_entity AS entity
     JOIN raw.entity_checkpoints AS checkpoint
       ON checkpoint.extraction_id = entity.extraction_id
@@ -47,29 +47,47 @@ selected_checkpoint AS (
     ORDER BY checkpoint.sequence DESC
     LIMIT 1
 ),
+selected_checkpoint AS MATERIALIZED (
+    SELECT
+        entity.match_id,
+        key.extraction_id,
+        checkpoint.properties
+    FROM selected_entity AS entity
+    JOIN selected_checkpoint_key AS key
+      ON key.extraction_id = entity.extraction_id
+     AND key.entity_instance_id = entity.entity_instance_id
+    JOIN raw.entity_checkpoints AS checkpoint
+      ON checkpoint.extraction_id = key.extraction_id
+     AND checkpoint.entity_instance_id = key.entity_instance_id
+     AND checkpoint.sequence = key.sequence
+),
+-- A scalar json_each input expands only the selected JSON value. A lateral
+-- join would retain the large parent checkpoint once for every property row.
+checkpoint_properties AS MATERIALIZED (
+    SELECT
+        json_extract_string(property.value, '$.propertyPath') AS property_path,
+        json_extract_string(property.value, '$.value') AS value
+    FROM json_each((SELECT properties FROM selected_checkpoint)) AS property
+),
 property_values AS (
     SELECT
-        checkpoint.match_id,
-        checkpoint.extraction_id,
-        max(json_extract_string(property.value, '$.value')) FILTER (
-            WHERE json_extract_string(property.value, '$.propertyPath') =
-                'm_pGameRules.m_nGameWinner'
+        entity.match_id,
+        entity.extraction_id,
+        max(property.value) FILTER (
+            WHERE property.property_path = 'm_pGameRules.m_nGameWinner'
         )::INTEGER AS winner_team_id,
-        max(json_extract_string(property.value, '$.value')) FILTER (
-            WHERE json_extract_string(property.value, '$.propertyPath') =
-                'm_pGameRules.m_iGameMode'
+        max(property.value) FILTER (
+            WHERE property.property_path = 'm_pGameRules.m_iGameMode'
         )::INTEGER AS game_mode_id,
-        max(json_extract_string(property.value, '$.value')) FILTER (
-            WHERE json_extract_string(property.value, '$.propertyPath') =
-                'm_pGameRules.m_flGameStartTime'
+        max(property.value) FILTER (
+            WHERE property.property_path = 'm_pGameRules.m_flGameStartTime'
         )::DOUBLE AS game_start_time,
-        max(json_extract_string(property.value, '$.value')) FILTER (
-            WHERE json_extract_string(property.value, '$.propertyPath') =
-                'm_pGameRules.m_flGameEndTime'
+        max(property.value) FILTER (
+            WHERE property.property_path = 'm_pGameRules.m_flGameEndTime'
         )::DOUBLE AS game_end_time
-    FROM selected_checkpoint AS checkpoint,
-    LATERAL json_each(checkpoint.properties) AS property
-    GROUP BY checkpoint.match_id, checkpoint.extraction_id
+    FROM selected_entity AS entity
+    CROSS JOIN checkpoint_properties AS property
+    GROUP BY entity.match_id, entity.extraction_id
 )
 SELECT
     match_id::UBIGINT AS match_id,
@@ -87,7 +105,7 @@ SELECT
 FROM property_values;
 
 CREATE OR REPLACE MACRO analysis.match_players(requested_match_id) AS TABLE
-WITH selected_entity AS (
+WITH selected_entity AS MATERIALIZED (
     SELECT
         extraction.match_id,
         extraction.extraction_id,
@@ -100,11 +118,11 @@ WITH selected_entity AS (
     ORDER BY entity.sequence
     LIMIT 1
 ),
-selected_checkpoint AS (
+selected_checkpoint_key AS MATERIALIZED (
     SELECT
-        entity.match_id,
-        entity.extraction_id,
-        checkpoint.properties
+        checkpoint.extraction_id,
+        checkpoint.entity_instance_id,
+        checkpoint.sequence
     FROM selected_entity AS entity
     JOIN raw.entity_checkpoints AS checkpoint
       ON checkpoint.extraction_id = entity.extraction_id
@@ -113,19 +131,32 @@ selected_checkpoint AS (
     ORDER BY checkpoint.sequence DESC
     LIMIT 1
 ),
-checkpoint_properties AS (
+selected_checkpoint AS MATERIALIZED (
     SELECT
-        checkpoint.match_id,
-        checkpoint.extraction_id,
+        entity.match_id,
+        key.extraction_id,
+        checkpoint.properties
+    FROM selected_entity AS entity
+    JOIN selected_checkpoint_key AS key
+      ON key.extraction_id = entity.extraction_id
+     AND key.entity_instance_id = entity.entity_instance_id
+    JOIN raw.entity_checkpoints AS checkpoint
+      ON checkpoint.extraction_id = key.extraction_id
+     AND checkpoint.entity_instance_id = key.entity_instance_id
+     AND checkpoint.sequence = key.sequence
+),
+-- Keep the selected checkpoint JSON out of the expanded rows so this final
+-- state query stays within the web SQL runner's bounded memory configuration.
+checkpoint_properties AS MATERIALIZED (
+    SELECT
         json_extract_string(property.value, '$.propertyPath') AS property_path,
         json_extract_string(property.value, '$.value') AS value
-    FROM selected_checkpoint AS checkpoint,
-    LATERAL json_each(checkpoint.properties) AS property
+    FROM json_each((SELECT properties FROM selected_checkpoint)) AS property
 ),
 players AS (
     SELECT
-        properties.match_id,
-        properties.extraction_id,
+        entity.match_id,
+        entity.extraction_id,
         player_index,
         max(value) FILTER (
             WHERE property_path = format(
@@ -177,9 +208,10 @@ players AS (
                 'm_vecPlayerTeamData.{:04d}.m_iLevel', player_index
             )
         )::INTEGER AS level
-    FROM checkpoint_properties AS properties
+    FROM selected_entity AS entity
     CROSS JOIN range(10) AS indexes(player_index)
-    GROUP BY properties.match_id, properties.extraction_id, player_index
+    CROSS JOIN checkpoint_properties AS properties
+    GROUP BY entity.match_id, entity.extraction_id, player_index
 )
 SELECT
     player.match_id::UBIGINT AS match_id,
