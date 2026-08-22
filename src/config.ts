@@ -11,6 +11,9 @@ export const paths = {
 export const limits = {
   replayBytes: envPositiveInt("MAX_REPLAY_BYTES", 2_000_000_000),
   fetchTimeoutMs: envPositiveInt("FETCH_TIMEOUT_MS", 60_000),
+  fetchRetryAttempts: envPositiveInt("FETCH_RETRY_ATTEMPTS", 3),
+  fetchRetryBaseMs: envPositiveInt("FETCH_RETRY_BASE_MS", 500),
+  fetchRetryMaxMs: envPositiveInt("FETCH_RETRY_MAX_MS", 2_000),
 };
 
 export function envPositiveInt(name: string, fallback: number): number {

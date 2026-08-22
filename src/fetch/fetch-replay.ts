@@ -4,6 +4,7 @@ import { copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { AsyncRetryer } from "@tanstack/pacer";
 import { limits, replayDir } from "../config.js";
 import { sha256File } from "../lib/hash.js";
 import { writeJson } from "../lib/json.js";
@@ -22,6 +23,15 @@ export type Acquisition = {
 
 type OpenDotaMatch = { cluster?: number; replay_salt?: number | string; replay_url?: string };
 class ReplayUnavailableError extends Error {}
+class RetriableDownloadError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RetriableDownloadError";
+  }
+}
+
+type DownloadResult = { sha256: string; bytes: number };
+type DownloadOutcome = { ok: true; result: DownloadResult } | { ok: false; error: Error };
 
 export async function fetchReplay(matchId: bigint, directSource?: string): Promise<Acquisition> {
   const dir = replayDir(matchId);
@@ -110,13 +120,63 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   finally { clearTimeout(timer); }
 }
 
-async function download(url: string, destination: string): Promise<{ sha256: string; bytes: number }> {
+async function download(url: string, destination: string): Promise<DownloadResult> {
+  const retryer = new AsyncRetryer(async (): Promise<DownloadOutcome> => {
+    await rm(destination, { force: true });
+    try {
+      return { ok: true, result: await downloadOnce(url, destination) };
+    } catch (error) {
+      await rm(destination, { force: true });
+      if (error instanceof RetriableDownloadError) throw error;
+      return { ok: false, error: asError(error) };
+    }
+  }, {
+    maxAttempts: limits.fetchRetryAttempts,
+    backoff: "exponential",
+    baseWait: limits.fetchRetryBaseMs,
+    maxWait: limits.fetchRetryMaxMs,
+    throwOnError: "last",
+  });
+
+  let outcome: DownloadOutcome | undefined;
+  try {
+    outcome = await retryer.execute();
+  } catch (error) {
+    await rm(destination, { force: true });
+    const lastError = asError(error);
+    throw new Error(
+      `Replay download failed after ${limits.fetchRetryAttempts} attempts: ${describeError(lastError)}`,
+      { cause: lastError },
+    );
+  }
+
+  if (outcome === undefined) {
+    await rm(destination, { force: true });
+    throw new Error("Replay download retry flow was aborted");
+  }
+  if (!outcome.ok) {
+    await rm(destination, { force: true });
+    throw outcome.error;
+  }
+  return outcome.result;
+}
+
+async function downloadOnce(url: string, destination: string): Promise<DownloadResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), limits.fetchTimeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal, redirect: "follow" });
-    if (response.status === 404 || response.status === 410 || response.status === 502) {
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: controller.signal, redirect: "follow" });
+    } catch (error) {
+      throw retriableNetworkError(error);
+    }
+    if (response.status === 404 || response.status === 410) {
       throw new ReplayUnavailableError(`Replay is unavailable: HTTP ${response.status}`);
+    }
+    if (response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500) {
+      await response.body?.cancel();
+      throw new RetriableDownloadError(`Replay download returned transient HTTP ${response.status}`);
     }
     if (!response.ok || response.body === null) throw new Error(`Replay download failed: HTTP ${response.status}`);
     const declared = Number(response.headers.get("content-length"));
@@ -130,9 +190,49 @@ async function download(url: string, destination: string): Promise<{ sha256: str
         else { hash.update(chunk); callback(null, chunk); }
       },
     });
-    await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(destination, { flags: "wx", mode: 0o600 }));
+    try {
+      await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(destination, { flags: "wx", mode: 0o600 }));
+    } catch (error) {
+      if (isNetworkError(error)) throw retriableNetworkError(error);
+      throw error;
+    }
     return { sha256: hash.digest("hex"), bytes };
   } finally { clearTimeout(timer); }
+}
+
+function retriableNetworkError(error: unknown): RetriableDownloadError {
+  const cause = asError(error);
+  return new RetriableDownloadError(`Replay network error: ${describeError(cause)}`, { cause });
+}
+
+function isNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError" || error instanceof TypeError) return true;
+  const code = errorCode(error) ?? errorCode(error.cause);
+  return code !== undefined && /^(?:UND_ERR_|EAI_AGAIN$|E(?:CONN|HOST|NET|PIPE|TIMEDOUT))/.test(code);
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function describeError(error: unknown): string {
+  const details: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    const code = errorCode(current);
+    const detail = code !== undefined && !current.message.includes(code)
+      ? `${code}: ${current.message}`
+      : current.message;
+    if (detail && details.at(-1) !== detail) details.push(detail);
+    current = current.cause;
+  }
+  return details.join(" -> ") || String(error);
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
 }
 
 async function copyLocal(source: string, destination: string): Promise<{ sha256: string; bytes: number }> {

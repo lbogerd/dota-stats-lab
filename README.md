@@ -21,6 +21,8 @@ DOTA_REPLAY_SOURCE='https://example/replay.dem.bz2' ./dota ingest MATCH_ID
 DOTA_REPLAY_SOURCE='/absolute/path/replay.dem.bz2' ./dota ingest MATCH_ID
 ```
 
+Replay downloads make three attempts by default for transient network failures, timeouts, HTTP 408/425/429 responses, and server errors. Backoff is exponential and capped at two seconds; permanent client errors and replay size violations fail immediately. Override the bounds with `FETCH_RETRY_ATTEMPTS`, `FETCH_RETRY_BASE_MS`, and `FETCH_RETRY_MAX_MS`.
+
 ## Protected web app
 
 The mobile web interface is available at `https://dota.tainer.run` through the tainer Better Auth gateway. The origin is published only on IPv4 loopback at `127.0.0.1:3400`; do not expose that port to the LAN or public internet.
