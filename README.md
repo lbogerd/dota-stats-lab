@@ -48,3 +48,11 @@ docker compose build test parser
 The Node test image covers IDs, manifests, checksums, locking, migrations, atomic rollback, idempotency, and both analysis queries. The parser image build compiles the Clarity exporter; its focused Java tests can be run with the Gradle builder target. A real replay fixture is intentionally kept outside Git.
 
 The parser and loader run without network access and with reduced container privileges. These controls reduce exposure; Docker is not a complete security boundary.
+
+## Development notes
+
+- Treat applied files in `src/db/migrations` as immutable; add a later numbered migration for schema changes.
+- Bump the exporter version in both the Java exporter and loader preflight whenever parser output semantics change. Extraction identity depends on this version and the extraction configuration.
+- Keep parser-native paths and values in raw storage. Friendly names and derived Dota statistics remain outside the first-release data contract.
+- Failed staging directories are intentionally retained for diagnosis. Once investigated, they can be removed from the `dota-stats-staging` volume without affecting cached replays or committed warehouse data.
+- Do not use `docker compose down --volumes` as routine cleanup. The replay and warehouse volumes are the durable source and analysis state.
