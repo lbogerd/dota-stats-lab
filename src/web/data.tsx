@@ -2,11 +2,13 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import type { JobStatus as ServerJobStatus } from "../jobs/job-files.js";
 import type { CatalogMatchDetail, CatalogMatchSummary } from "../server/catalog.js";
+import type { SqlCatalog } from "../server/sql-catalog.js";
 import type { ReadOnlySqlResult } from "../server/warehouse.js";
 import type { SavedQuery } from "../server/saved-queries.js";
 import {
   deleteSavedQueryFn,
   getMatchDetailFn,
+  getSqlCatalogFn,
   listJobsFn,
   listMatchesFn,
   listSavedQueriesFn,
@@ -33,6 +35,7 @@ export type MatchSummary = CatalogMatchSummary;
 export type MatchDetail = CatalogMatchDetail;
 export type { SavedQuery };
 export type SqlResult = ReadOnlySqlResult;
+export type { SqlCatalog };
 
 export const matchIdSchema = z.string().regex(/^[1-9][0-9]{5,19}$/, "Enter a valid numeric match ID.");
 export const queryNameSchema = z.string().min(1).max(48).regex(/^[a-z0-9_-]+$/, "Use lowercase letters, numbers, hyphens, or underscores.");
@@ -43,6 +46,7 @@ export const queryKeys = {
   match: (matchId: string) => ["matches", matchId] as const,
   queries: ["saved-queries"] as const,
   query: (name: string) => ["saved-queries", name] as const,
+  sqlCatalog: ["sql-catalog"] as const,
 };
 
 function mapJob(status: ServerJobStatus): Job {
@@ -99,6 +103,10 @@ export async function runSql(sql: string): Promise<SqlResult> {
   return runSqlFn({ data: { sql } });
 }
 
+export async function getSqlCatalog(): Promise<SqlCatalog> {
+  return getSqlCatalogFn();
+}
+
 export const jobsQuery = () => queryOptions({
   queryKey: queryKeys.jobs,
   queryFn: getJobs,
@@ -108,6 +116,14 @@ export const matchesQuery = () => queryOptions({ queryKey: queryKeys.matches, qu
 export const matchQuery = (matchId: string) => queryOptions({ queryKey: queryKeys.match(matchId), queryFn: () => getMatch(matchId) });
 export const savedQueriesQuery = () => queryOptions({ queryKey: queryKeys.queries, queryFn: getSavedQueries });
 export const savedQueryQuery = (name: string) => queryOptions({ queryKey: queryKeys.query(name), queryFn: () => getSavedQuery(name) });
+export const sqlCatalogQuery = () => queryOptions({
+  queryKey: queryKeys.sqlCatalog,
+  queryFn: getSqlCatalog,
+  staleTime: Infinity,
+  gcTime: Infinity,
+  retry: 1,
+  refetchOnMount: false,
+});
 
 export function formatRelative(date: string): string {
   const milliseconds = new Date(date).getTime();

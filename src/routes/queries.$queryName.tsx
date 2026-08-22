@@ -1,14 +1,20 @@
-import { sql as sqlLanguage } from "@codemirror/lang-sql";
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import CodeMirror from "@uiw/react-codemirror";
 import { ArrowLeft, Check, ChevronDown, Clipboard, Download, FileJson2, LoaderCircle, MoreHorizontal, Pencil, Play, Save, Table2, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { deleteQuery, queryKeys, queryNameSchema, renameQuery, runSql, saveQuery, savedQueryQuery, type SqlResult } from "../web/data";
+import { deleteQuery, queryKeys, queryNameSchema, renameQuery, runSql, saveQuery, savedQueryQuery, sqlCatalogQuery, type SqlResult } from "../web/data";
+import { sqlLanguageForCatalog } from "../web/sql-autocomplete";
 import { PrimaryButton, SecondaryButton } from "../web/ui";
 
 export const Route = createFileRoute("/queries/$queryName")({
-  loader: ({ context, params }) => context.queryClient.ensureQueryData(savedQueryQuery(params.queryName)),
+  loader: async ({ context, params }) => {
+    const [query] = await Promise.all([
+      context.queryClient.ensureQueryData(savedQueryQuery(params.queryName)),
+      context.queryClient.prefetchQuery(sqlCatalogQuery()),
+    ]);
+    return query;
+  },
   component: QueryEditorPage,
 });
 
@@ -26,6 +32,7 @@ function resultCsv(result: SqlResult): string {
 function QueryEditorPage() {
   const { queryName } = Route.useParams();
   const { data: query } = useSuspenseQuery(savedQueryQuery(queryName));
+  const catalogQuery = useQuery(sqlCatalogQuery());
   const client = useQueryClient();
   const navigate = useNavigate();
   const [sql, setSql] = useState(query?.sql ?? "");
@@ -39,7 +46,7 @@ function QueryEditorPage() {
   const [saved, setSaved] = useState(false);
   useEffect(() => { if (query) setSql(query.sql); }, [query]);
   const dirty = query ? sql !== query.sql : Boolean(sql);
-  const editorExtensions = useMemo(() => [sqlLanguage()], []);
+  const editorExtensions = useMemo(() => [sqlLanguageForCatalog(catalogQuery.data)], [catalogQuery.data]);
 
   const runMutation = useMutation({ mutationFn: () => runSql(sql), onSuccess: setResult });
   const saveMutation = useMutation({
@@ -78,6 +85,7 @@ function QueryEditorPage() {
       <div className="overflow-hidden bg-[#202923]">
         <CodeMirror value={sql} onChange={setSql} extensions={editorExtensions} minHeight="290px" maxHeight="480px" basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }} theme="dark" className="text-[13px] [&_.cm-editor]:bg-[#202923] [&_.cm-gutters]:bg-[#202923] [&_.cm-gutters]:border-r-[#344039] [&_.cm-content]:py-4" aria-label="SQL editor" />
       </div>
+      {catalogQuery.isError && <div className="border-t border-[#e5cfaa] bg-[#fff8e8] px-5 py-3 text-xs font-medium text-[#80602b]">Database suggestions are not available. General SQL autocomplete still works.</div>}
       {runMutation.isError && <div className="border-t border-[#dca99e] bg-[#fff0ec] px-5 py-3 text-xs font-medium text-[#9b3f33]">{runMutation.error instanceof Error ? runMutation.error.message : "The query could not be run."}</div>}
     </section>
 

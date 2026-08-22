@@ -8,6 +8,7 @@ import {
   saveSavedQueryInputSchema,
   savedQueryNameInputSchema,
 } from "../server/saved-queries.js";
+import { getSqlCatalog } from "../server/sql-catalog.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
 
 export const listSavedQueriesFn = createServerFn({ method: "GET" })
@@ -51,6 +52,9 @@ export const getMatchDetailFn = createServerFn({ method: "GET" })
 export const runSqlFn = createServerFn({ method: "POST" })
   .validator(browserSqlInputSchema)
   .handler(({ data }) => executeReadOnlySql(data.sql));
+
+export const getSqlCatalogFn = createServerFn({ method: "GET" })
+  .handler(() => getSqlCatalog());
 
 export const listJobsFn = createServerFn({ method: "GET" })
   .handler(() => ensureIngestionCoordinator().list());
