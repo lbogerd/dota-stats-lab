@@ -44,7 +44,15 @@ Job handoff files and failed extraction output live in the project-scoped `dota-
 
 ## SQL queries
 
-The shell accepts DuckDB SQL and prints one JSON object per result row. Two analysis table macros are included:
+The shell accepts DuckDB SQL and prints one JSON object per result row. Match analysis uses the latest successful extraction for the requested match. The first macro returns the match summary; the second returns the final player scoreboard:
+
+```sql
+SELECT * FROM analysis.match_summary(8959222564);
+
+SELECT * FROM analysis.match_players(8959222564);
+```
+
+Lower-level entity analysis table macros are also included:
 
 ```sql
 SELECT * FROM analysis.entity_property_history(
