@@ -28,7 +28,7 @@ import java.util.UUID;
 public final class Main {
     static final String PARSER_NAME = "clarity";
     static final String PARSER_VERSION = "4.0.1";
-    static final String EXPORTER_VERSION = "0.1.2";
+    static final String EXPORTER_VERSION = "0.1.3";
     private static final BigInteger UINT64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
     private static final ObjectMapper JSON = new ObjectMapper()
             .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)

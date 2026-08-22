@@ -5,7 +5,11 @@ import { paths } from "../config.js";
 
 export async function openWarehouse(readOnly = false): Promise<{ connection: DuckDBConnection; close: () => void }> {
   await mkdir(path.dirname(paths.warehousePath), { recursive: true });
-  const instance = await DuckDBInstance.create(paths.warehousePath, readOnly ? { access_mode: "READ_ONLY" } : {});
+  const commonOptions = { threads: "1", memory_limit: "3GB" };
+  const instance = await DuckDBInstance.create(
+    paths.warehousePath,
+    readOnly ? { ...commonOptions, access_mode: "READ_ONLY" } : commonOptions,
+  );
   const connection = await instance.connect();
   return { connection, close: () => connection.closeSync() };
 }

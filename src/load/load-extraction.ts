@@ -39,6 +39,7 @@ export async function loadExtraction(matchId: bigint): Promise<LoadResult> {
       try {
         await insertCatalog(database.connection, manifest, acquisition);
         await importStagedFiles(database.connection, extractionDir, manifest);
+        await validateImportedRows(database.connection, manifest);
         await database.connection.run(
           `UPDATE catalog.extractions SET status = 'succeeded', completed_at = current_timestamp,
              load_elapsed_ms = $elapsed WHERE extraction_id = $id`,
@@ -46,8 +47,16 @@ export async function loadExtraction(matchId: bigint): Promise<LoadResult> {
         );
         await database.connection.run("COMMIT");
       } catch (error) {
-        await database.connection.run("ROLLBACK");
-        await recordFailure(database.connection, manifest, error);
+        try { await database.connection.run("ROLLBACK"); }
+        catch (rollbackError) {
+          if (!(rollbackError instanceof Error && /no transaction is active/i.test(rollbackError.message))) {
+            if (error instanceof Error) error.cause = rollbackError;
+          }
+        }
+        try { await recordFailure(database.connection, manifest, error); }
+        catch (catalogError) {
+          if (error instanceof Error) error.cause = catalogError;
+        }
         throw error;
       }
       await rm(extractionDir, { recursive: true });
@@ -97,8 +106,15 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
        $config::JSON, $interval, $limit, $startedAt::TIMESTAMPTZ, 'started', $parseMs, $outputBytes,
        $counts::JSON, $manifest::JSON)
      ON CONFLICT (extraction_id) DO UPDATE SET
-       started_at = excluded.started_at, status = 'started', completed_at = NULL,
-       error_code = NULL, error_message = NULL, manifest = excluded.manifest`,
+       match_id = excluded.match_id, replay_sha256 = excluded.replay_sha256,
+       parser_name = excluded.parser_name, parser_version = excluded.parser_version,
+       exporter_version = excluded.exporter_version, extraction_config = excluded.extraction_config,
+       checkpoint_interval_seconds = excluded.checkpoint_interval_seconds,
+       output_limit_bytes = excluded.output_limit_bytes, started_at = excluded.started_at,
+       status = 'started', completed_at = NULL, parse_elapsed_ms = excluded.parse_elapsed_ms,
+       load_elapsed_ms = NULL, output_size_bytes = excluded.output_size_bytes,
+       record_counts = excluded.record_counts, error_code = NULL, error_message = NULL,
+       manifest = excluded.manifest`,
     {
       id: manifest.extractionId, matchId: BigInt(manifest.matchId), sha: manifest.replaySha256,
       parserName: manifest.parser.name, parserVersion: manifest.parser.version,
@@ -122,7 +138,40 @@ async function importStagedFiles(connection: DuckDBConnection, dir: string, mani
   for (const [logical, template] of imports) {
     if (manifest.files[logical].records === 0) continue;
     const file = path.join(dir, stagedFiles[logical]);
-    await connection.run(template.replace("__FILE__", sqlLiteral(file)));
+    try {
+      await connection.run(template.replace("__FILE__", sqlLiteral(file)));
+    } catch (error) {
+      throw new Error(`Failed importing ${logical}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  }
+}
+
+async function validateImportedRows(connection: DuckDBConnection, manifest: Manifest): Promise<void> {
+  const result = await connection.runAndReadAll(
+    `SELECT
+       (SELECT count(*) FROM raw.records WHERE extraction_id = $id) AS records,
+       (SELECT count(*) FROM raw.record_blobs WHERE extraction_id = $id) AS blobs,
+       (SELECT count(*) FROM raw.entity_instances WHERE extraction_id = $id) AS entity_instances,
+       (SELECT count(*) FROM raw.entity_events WHERE extraction_id = $id) AS entity_events,
+       (SELECT count(*) FROM raw.entity_property_updates WHERE extraction_id = $id) AS property_updates,
+       (SELECT count(DISTINCT sequence) FROM raw.entity_property_updates WHERE extraction_id = $id) AS property_update_sequences,
+       (SELECT count(*) FROM raw.entity_checkpoints WHERE extraction_id = $id) AS checkpoints`,
+    { id: manifest.extractionId },
+  );
+  const row = result.getRowObjects()[0] as Record<string, bigint>;
+  const expected: Record<string, bigint> = {
+    records: BigInt(manifest.files.records.records),
+    blobs: BigInt(manifest.files.blobs.records),
+    entity_instances: BigInt(manifest.files.entityInstances.records),
+    entity_events: BigInt(manifest.files.entityEvents.records),
+    property_updates: BigInt(manifest.files.propertyUpdates.records),
+    checkpoints: BigInt(manifest.files.checkpoints.records),
+  };
+  for (const [name, count] of Object.entries(expected)) {
+    if (row[name] !== count) throw new Error(`Imported ${name} count does not match manifest`);
+  }
+  if (row.property_update_sequences !== expected.property_updates) {
+    throw new Error("Imported property update sequences are not unique");
   }
 }
 
@@ -131,10 +180,11 @@ async function recordFailure(connection: DuckDBConnection, manifest: Manifest, e
   await connection.run(
     `INSERT INTO catalog.extractions
        (extraction_id, match_id, replay_sha256, parser_name, parser_version, exporter_version,
-        extraction_config, checkpoint_interval_seconds, output_limit_bytes, status, error_code, error_message, manifest)
+        extraction_config, checkpoint_interval_seconds, output_limit_bytes, completed_at,
+        status, error_code, error_message, manifest)
      VALUES ($id, $matchId, $sha, $parserName, $parserVersion, $exporterVersion,
-       $config::JSON, $interval, $limit, 'failed', 'load_failed', $message, $manifest::JSON)
-     ON CONFLICT (extraction_id) DO UPDATE SET status='failed', completed_at=current_timestamp,
+       $config::JSON, $interval, $limit, now(), 'failed', 'load_failed', $message, $manifest::JSON)
+     ON CONFLICT (extraction_id) DO UPDATE SET status='failed', completed_at=now(),
        error_code='load_failed', error_message=excluded.error_message`,
     {
       id: manifest.extractionId, matchId: BigInt(manifest.matchId), sha: manifest.replaySha256,

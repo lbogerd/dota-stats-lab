@@ -55,13 +55,38 @@ test("malformed staged JSON rolls back raw data and retains failed staging", asy
   const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
   const connection = await instance.connect();
   try {
-    const result = await connection.runAndReadAll("SELECT count(*)::INTEGER AS n FROM raw.records");
-    assert.equal((result.getRowObjectsJson()[0] as { n: number }).n, 1);
+    const result = await connection.runAndReadAll(
+      `SELECT
+         (SELECT count(*)::INTEGER FROM raw.records) AS n,
+         (SELECT completed_at IS NOT NULL FROM catalog.extractions WHERE extraction_id = '${failedId}') AS failure_completed`,
+    );
+    assert.deepEqual(result.getRowObjectsJson(), [{ n: 1, failure_completed: true }]);
   } finally { connection.closeSync(); }
 });
 
-async function stage(id: string, rows: Record<string, string>): Promise<void> {
-  const directory = path.join(process.env.STAGING_ROOT!, matchId.toString(), id);
+test("duplicate property-update sequences roll back the extraction", async () => {
+  const duplicateId = "d".repeat(64);
+  const duplicateMatchId = 43n;
+  const rows = Object.fromEntries(Object.entries(goodRows).map(
+    ([name, body]) => [name, body.replaceAll(extractionId, duplicateId)],
+  ));
+  const propertyRows = rows["property_updates.ndjson"]!;
+  rows["property_updates.ndjson"] = propertyRows + propertyRows;
+  await stage(duplicateId, rows, duplicateMatchId);
+  await assert.rejects(loadExtraction(duplicateMatchId), /sequences are not unique/);
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(
+      `SELECT count(*)::INTEGER AS n FROM raw.entity_property_updates WHERE extraction_id = '${duplicateId}'`,
+    );
+    assert.deepEqual(result.getRowObjectsJson(), [{ n: 0 }]);
+  } finally { connection.closeSync(); }
+});
+
+async function stage(id: string, rows: Record<string, string>, stagedMatchId = matchId): Promise<void> {
+  const directory = path.join(process.env.STAGING_ROOT!, stagedMatchId.toString(), id);
   await mkdir(directory, { recursive: true });
   const files: Record<string, unknown> = {};
   const logical: Record<string, string> = {
@@ -71,12 +96,17 @@ async function stage(id: string, rows: Record<string, string>): Promise<void> {
   for (const [key, name] of Object.entries(logical)) {
     const body = rows[name]!;
     await writeFile(path.join(directory, name), body);
-    files[key] = { path: name, sha256: createHash("sha256").update(body).digest("hex"), bytes: Buffer.byteLength(body), records: body === "" ? 0 : 1 };
+    files[key] = {
+      path: name,
+      sha256: createHash("sha256").update(body).digest("hex"),
+      bytes: Buffer.byteLength(body),
+      records: body.match(/\n/g)?.length ?? 0,
+    };
   }
   const now = new Date().toISOString();
   await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
-    schemaVersion: 1, extractionId: id, matchId: matchId.toString(), replaySha256,
-    parser: { name: "clarity", version: "4.0.1" }, exporterVersion: "0.1.2",
+    schemaVersion: 1, extractionId: id, matchId: stagedMatchId.toString(), replaySha256,
+    parser: { name: "clarity", version: "4.0.1" }, exporterVersion: "0.1.3",
     config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 12_884_901_888, maxRecords: 50_000_000, timeoutSeconds: 1_800 },
     startedAt: now, completedAt: now, elapsedMs: 1, files, counts: {},
   }));

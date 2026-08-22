@@ -124,7 +124,7 @@ final class ReplayExporter {
     @OnTickEnd
     public void onTickEnd(Context context, boolean synthetic) throws Exception {
         touch(context);
-        if (gameTime == null) return;
+        if (paused || gameTime == null) return;
         while (gameTime >= nextCheckpoint) {
             checkpointAll("interval");
             nextCheckpoint += config.checkpointIntervalSeconds();
