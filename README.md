@@ -44,7 +44,15 @@ Job handoff files and failed extraction output live in the project-scoped `dota-
 
 ## SQL queries
 
-The shell accepts DuckDB SQL and prints one JSON object per result row. Two analysis table macros are included:
+The shell accepts DuckDB SQL and prints one JSON object per result row. Match analysis uses the latest successful extraction for the requested match. The first macro returns the match summary; the second returns the final player scoreboard:
+
+```sql
+SELECT * FROM analysis.match_summary(8959222564);
+
+SELECT * FROM analysis.match_players(8959222564);
+```
+
+Lower-level entity analysis table macros are also included:
 
 ```sql
 SELECT * FROM analysis.entity_property_history(
@@ -76,6 +84,6 @@ The parser and loader run without network access and with reduced container priv
 
 - Treat applied files in `src/db/migrations` as immutable; add a later numbered migration for schema changes.
 - Bump the exporter version in both the Java exporter and loader preflight whenever parser output semantics change. Extraction identity depends on this version and the extraction configuration.
-- Keep parser-native paths and values in raw storage. Friendly names and derived Dota statistics remain outside the first-release data contract.
+- Keep parser-native paths and values in raw storage. Put friendly names and derived Dota statistics in analysis views and macros, not in raw tables.
 - Failed staging directories are intentionally retained for diagnosis. Once investigated, they can be removed from the `dota-stats-staging` volume without affecting cached replays or committed warehouse data.
 - Do not use `docker compose down --volumes` as routine cleanup. The replay and warehouse volumes are the durable source and analysis state.
