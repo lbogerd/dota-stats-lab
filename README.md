@@ -84,6 +84,6 @@ The parser and loader run without network access and with reduced container priv
 
 - Treat applied files in `src/db/migrations` as immutable; add a later numbered migration for schema changes.
 - Bump the exporter version in both the Java exporter and loader preflight whenever parser output semantics change. Extraction identity depends on this version and the extraction configuration.
-- Keep parser-native paths and values in raw storage. Friendly names and derived Dota statistics remain outside the first-release data contract.
+- Keep parser-native paths and values in raw storage. Put friendly names and derived Dota statistics in analysis views and macros, not in raw tables.
 - Failed staging directories are intentionally retained for diagnosis. Once investigated, they can be removed from the `dota-stats-staging` volume without affecting cached replays or committed warehouse data.
 - Do not use `docker compose down --volumes` as routine cleanup. The replay and warehouse volumes are the durable source and analysis state.
