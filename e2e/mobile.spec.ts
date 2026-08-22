@@ -1,4 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+test.use({ hasTouch: true });
+
+function completionOption(page: Page, label: string) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.locator(".cm-tooltip-autocomplete [role=option]").filter({
+    has: page.locator(".cm-completionLabel").filter({ hasText: new RegExp(`^${escapedLabel}$`) }),
+  });
+}
+
+function sqlEditor(page: Page) {
+  return page.locator('[aria-label="SQL editor"] [role=textbox]');
+}
+
+async function replaceEditorText(page: Page, sql: string) {
+  const editor = sqlEditor(page);
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type(sql);
+}
 
 test("mobile user can browse data and manage a saved query", async ({ page }) => {
   const queryName = `e2e-mobile-${Date.now()}`;
@@ -18,6 +38,35 @@ test("mobile user can browse data and manage a saved query", async ({ page }) =>
   await page.getByRole("button", { name: "Create file" }).click();
 
   await expect(page.getByRole("heading", { name: `${queryName}.sql` })).toBeVisible();
+
+  await replaceEditorText(page, "SELECT * FROM raw.");
+  const recordsCompletion = completionOption(page, "records");
+  await expect(recordsCompletion).toBeVisible();
+  await expect(recordsCompletion.locator(".cm-completionDetail")).toHaveText("table");
+  await recordsCompletion.tap();
+  await expect(sqlEditor(page)).toContainText("SELECT * FROM raw.records");
+
+  await replaceEditorText(page, "SELECT r\nFROM raw.records AS r;");
+  await page.keyboard.press("ControlOrMeta+Home");
+  await page.keyboard.press("End");
+  await page.keyboard.type(".");
+  const columnCompletion = completionOption(page, "extraction_id");
+  await expect(columnCompletion).toBeVisible();
+  await expect(columnCompletion.locator(".cm-completionDetail")).toHaveText("VARCHAR");
+  await columnCompletion.click();
+  await expect(sqlEditor(page)).toContainText("SELECT r.extraction_id");
+
+  await replaceEditorText(page, "SELECT * FROM analysis.");
+  const macroCompletion = completionOption(page, "entity_property_history");
+  await expect(macroCompletion).toBeVisible();
+  await expect(macroCompletion.locator(".cm-completionDetail")).toHaveText(
+    "table macro (requested_extraction_id, requested_instance_id, requested_property_path)",
+  );
+
+  const runnableSql = "SELECT r.extraction_id\nFROM raw.records AS r\nLIMIT 1;";
+  await replaceEditorText(page, runnableSql);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saved", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Run/ }).click();
   await expect(page.getByText("Read-only result", { exact: true })).toBeVisible();
 
@@ -33,6 +82,7 @@ test("mobile user can browse data and manage a saved query", async ({ page }) =>
 
   await page.getByRole("link", { name: "Saved queries" }).click();
   await page.getByRole("link", { name: new RegExp(`^${renamedQuery}\\.sql`) }).click();
+  await expect(sqlEditor(page)).toContainText(runnableSql.replaceAll("\n", ""));
   await page.getByRole("button", { name: "Query actions" }).click();
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("heading", { name: `Delete ${renamedQuery}.sql?` })).toBeVisible();
