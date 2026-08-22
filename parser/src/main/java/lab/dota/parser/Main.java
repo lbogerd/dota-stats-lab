@@ -106,6 +106,8 @@ public final class Main {
             manifest.put("elapsedMs", java.time.Duration.between(started, completed).toMillis());
             manifest.put("files", files.manifestFiles());
             manifest.put("counts", files.counts());
+            Map<String, Object> acquisition = acquisitionData(replay.getParent());
+            if (acquisition != null) manifest.put("acquisition", acquisition);
             long manifestBytes = JSON.writeValueAsBytes(manifest).length;
             if (files.totalBytes() + manifestBytes > config.maxOutputBytes()) {
                 throw new ExportLimitException("output limit exceeded including manifest: " + config.maxOutputBytes() + " bytes");
@@ -137,16 +139,21 @@ public final class Main {
     }
 
     private static String acquisitionSha(Path replayDirectory) {
+        Map<String, Object> data = acquisitionData(replayDirectory);
+        if (data == null) return null;
+        for (String key : new String[]{"replaySha256", "sha256", "checksumSha256"}) {
+            Object value = data.get(key);
+            if (value instanceof String s && s.matches("(?i)[0-9a-f]{64}")) return s;
+        }
+        return null;
+    }
+
+    private static Map<String, Object> acquisitionData(Path replayDirectory) {
         if (replayDirectory == null) return null;
         Path acquisition = replayDirectory.resolve("acquisition.json");
         if (!Files.isRegularFile(acquisition)) return null;
         try {
-            Map<String, Object> data = JSON.readValue(acquisition.toFile(), new TypeReference<>() {});
-            for (String key : new String[]{"replaySha256", "sha256", "checksumSha256"}) {
-                Object value = data.get(key);
-                if (value instanceof String s && s.matches("(?i)[0-9a-f]{64}")) return s;
-            }
-            return null;
+            return JSON.readValue(acquisition.toFile(), new TypeReference<>() {});
         } catch (IOException e) {
             throw new IllegalArgumentException("invalid acquisition.json: " + acquisition, e);
         }

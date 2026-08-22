@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.duckdb
+*.duckdb.*
+*.dem
+*.dem.bz2
+parser/.gradle/
+parser/build/

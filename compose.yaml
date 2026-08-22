@@ -1,0 +1,83 @@
+name: dota-stats-lab
+
+services:
+  test:
+    build:
+      context: .
+      target: test
+    image: dota-stats-lab-test:local
+
+  fetch:
+    build:
+      context: .
+      target: app
+    image: dota-stats-lab-app:local
+    command: ["fetch"]
+    init: true
+    volumes:
+      - type: volume
+        source: replays
+        target: /data/replays
+
+  parser:
+    build:
+      context: .
+      target: parser
+    image: dota-stats-lab-parser:local
+    command: []
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 3g
+    cpus: 2.0
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=2304m,mode=1777
+    volumes:
+      - type: volume
+        source: replays
+        target: /data/replays
+        read_only: true
+      - type: volume
+        source: staging
+        target: /work/staging
+
+  loader:
+    build:
+      context: .
+      target: app
+    image: dota-stats-lab-app:local
+    command: ["load"]
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    cpus: 2.0
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - type: volume
+        source: staging
+        target: /work/staging
+      - type: volume
+        source: warehouse
+        target: /data/warehouse
+
+volumes:
+  replays:
+    name: dota-stats-replays
+    external: true
+  warehouse:
+    name: dota-stats-warehouse
+    external: true
+  staging:
+    name: dota-stats-staging

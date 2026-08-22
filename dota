@@ -1,0 +1,108 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./dota init
+  ./dota ingest MATCH_ID
+  ./dota sql
+EOF
+}
+
+require_match_id() {
+  if [ "$#" -ne 1 ]; then
+    usage >&2
+    exit 2
+  fi
+
+  case "$1" in
+    ''|*[!0-9]*)
+      echo "error: MATCH_ID must be a positive decimal integer" >&2
+      exit 2
+      ;;
+  esac
+
+  case "$1" in
+    *[1-9]*) ;;
+    *)
+      echo "error: MATCH_ID must be a positive decimal integer" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [ "$#" -lt 1 ]; then
+  usage >&2
+  exit 2
+fi
+
+command=$1
+shift
+
+case "$command" in
+  init)
+    if [ "$#" -ne 0 ]; then
+      usage >&2
+      exit 2
+    fi
+    docker volume create dota-stats-replays >/dev/null
+    docker volume create dota-stats-warehouse >/dev/null
+    echo "Created durable volumes dota-stats-replays and dota-stats-warehouse."
+    ;;
+  ingest)
+    require_match_id "$@"
+    match_id=$1
+    if [ -n "${DOTA_REPLAY_SOURCE:-}" ]; then
+      case "$DOTA_REPLAY_SOURCE" in
+        http://*|https://*)
+          if fetch_output=$(docker compose run --rm --no-deps -e MATCH_ID="$match_id" -e REPLAY_SOURCE="$DOTA_REPLAY_SOURCE" fetch); then :; else
+            fetch_status=$?; printf '%s\n' "$fetch_output"; exit "$fetch_status"
+          fi
+          ;;
+        *)
+          if [ ! -f "$DOTA_REPLAY_SOURCE" ]; then
+            echo "error: DOTA_REPLAY_SOURCE is not a regular file" >&2
+            exit 2
+          fi
+          if fetch_output=$(docker compose run --rm --no-deps -e MATCH_ID="$match_id" -e REPLAY_SOURCE=/input/replay.dem.bz2 \
+            -v "$DOTA_REPLAY_SOURCE:/input/replay.dem.bz2:ro" fetch); then :; else
+            fetch_status=$?; printf '%s\n' "$fetch_output"; exit "$fetch_status"
+          fi
+          ;;
+      esac
+    else
+      if fetch_output=$(docker compose run --rm --no-deps -e MATCH_ID="$match_id" fetch); then :; else
+        fetch_status=$?; printf '%s\n' "$fetch_output"; exit "$fetch_status"
+      fi
+    fi
+    echo "$fetch_output"
+    replay_sha256=$(printf '%s\n' "$fetch_output" | sed -n 's/.*"replaySha256":"\([a-f0-9]\{64\}\)".*/\1/p' | tail -n 1)
+    if [ -z "$replay_sha256" ]; then
+      echo "error: fetcher did not return a replay checksum" >&2
+      exit 1
+    fi
+    if docker compose run --rm --no-deps -e MATCH_ID="$match_id" -e REPLAY_SHA256="$replay_sha256" loader check; then
+      echo "Identical successful extraction already exists; skipping parser."
+      exit 0
+    else
+      check_status=$?
+      if [ "$check_status" -ne 3 ]; then
+        exit "$check_status"
+      fi
+    fi
+    docker compose run --rm --no-deps -e MATCH_ID="$match_id" parser
+    docker compose run --rm --no-deps -e MATCH_ID="$match_id" loader
+    ;;
+  sql)
+    if [ "$#" -ne 0 ]; then
+      usage >&2
+      exit 2
+    fi
+    docker compose run --rm --no-deps loader sql
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
