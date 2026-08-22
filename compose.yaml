@@ -7,6 +7,45 @@ services:
       target: test
     image: dota-stats-lab-test:local
 
+  web:
+    build:
+      context: .
+      target: web
+    image: dota-stats-lab-web:local
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+    ports:
+      - "127.0.0.1:3400:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - type: volume
+        source: replays
+        target: /data/replays
+      - type: volume
+        source: staging
+        target: /work/staging
+      - type: volume
+        source: warehouse
+        target: /data/warehouse
+      - type: volume
+        source: queries
+        target: /data/queries
+
   fetch:
     build:
       context: .
@@ -81,3 +120,6 @@ volumes:
     external: true
   staging:
     name: dota-stats-staging
+  queries:
+    name: dota-stats-queries
+    external: true

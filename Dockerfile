@@ -6,7 +6,7 @@ ARG PNPM_VERSION=10.10.0
 WORKDIR /build
 
 RUN npm install --global "pnpm@${PNPM_VERSION}"
-COPY package.json pnpm-lock.yaml tsconfig.json ./
+COPY package.json pnpm-lock.yaml tsconfig.json tsconfig.web.json vite.config.ts vitest.config.ts ./
 RUN pnpm install --frozen-lockfile
 
 COPY src ./src
@@ -51,6 +51,31 @@ COPY --from=node-production --chown=dota:dota /build/src/db/queries ./queries
 
 USER 10001:10001
 ENTRYPOINT ["node", "/app/dist/src/cli/index.js"]
+
+
+FROM node:22.18.0-bookworm-slim AS web
+
+ENV NODE_ENV=production \
+    REPLAY_ROOT=/data/replays \
+    STAGING_ROOT=/work/staging \
+    WAREHOUSE_PATH=/data/warehouse/dota.duckdb \
+    QUERY_FILES_ROOT=/data/queries \
+    HOST=0.0.0.0 \
+    PORT=3000
+
+WORKDIR /app
+RUN groupadd --gid 10001 dota \
+    && useradd --uid 10001 --gid dota --no-create-home --shell /usr/sbin/nologin dota \
+    && mkdir -p /data/replays /data/warehouse /data/queries /work/staging \
+    && chown -R dota:dota /data/replays /data/warehouse /data/queries /work/staging
+
+COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
+COPY --from=node-production --chown=dota:dota /build/node_modules ./node_modules
+COPY --from=node-production --chown=dota:dota /build/dist ./dist
+
+USER 10001:10001
+EXPOSE 3000
+CMD ["./node_modules/.bin/srvx", "--prod", "--host=0.0.0.0", "--port=3000", "--static=../client", "--entry=dist/server/server.js"]
 
 
 FROM eclipse-temurin:21.0.8_9-jre AS parser

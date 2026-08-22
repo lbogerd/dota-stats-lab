@@ -48,7 +48,8 @@ case "$command" in
     fi
     docker volume create dota-stats-replays >/dev/null
     docker volume create dota-stats-warehouse >/dev/null
-    echo "Created durable volumes dota-stats-replays and dota-stats-warehouse."
+    docker volume create dota-stats-queries >/dev/null
+    echo "Created durable volumes dota-stats-replays, dota-stats-warehouse, and dota-stats-queries."
     ;;
   ingest)
     require_match_id "$@"
