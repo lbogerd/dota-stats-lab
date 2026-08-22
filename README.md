@@ -12,7 +12,7 @@ Docker Engine with Compose v2 is the only host dependency.
 ./dota sql
 ```
 
-The first ingestion builds the images. Replay and warehouse data survive container removal in the external `dota-stats-replays` and `dota-stats-warehouse` volumes. Successful staging data is removed; failed parser or loader staging is retained for diagnosis.
+Compose builds missing service images on first use. Replay and warehouse data survive container removal in the external `dota-stats-replays` and `dota-stats-warehouse` volumes. Successful staging data is removed; failed parser or loader staging is retained for diagnosis.
 
 The fetcher checks the replay cache first, then OpenDota metadata. If OpenDota has no replay URL, supply one directly:
 
@@ -31,12 +31,16 @@ Initialize the external volumes, then start the two permanent services:
 
 ```sh
 ./dota init
-docker compose up --detach --wait web parser-worker
+docker compose up --detach --build --wait web parser-worker
 ```
 
-The web app can submit one ingestion at a time, show current and recent job status, browse stored matches and immutable extractions, execute bounded read-only SQL, and manage saved `.sql` files. The parser worker has no network, warehouse, or saved-query access.
+The web app can submit one ingestion at a time, show current and recent job status, browse stored matches and immutable extractions, execute bounded read-only SQL, and manage saved `.sql` files.
 
 Saved queries live in the external `dota-stats-queries` volume and survive web-container replacement. Volume durability is not a backup; download important query files or copy the volume through your normal backup process.
+
+The permanent `web` service owns network replay acquisition, job coordination, DuckDB loading and read-only browser queries. The separate `parser-worker` has no network, warehouse, or saved-query access. The `fetch`, `parser`, and `loader` services remain available as one-shot containers for the CLI workflow.
+
+Job handoff files and failed extraction output live in the project-scoped `dota-stats-staging` volume. Before deleting retained failure data, confirm that no job is queued, fetching, parsing, or loading. Cached replays and committed warehouse data do not depend on failed staging directories.
 
 ## SQL queries
 
@@ -59,11 +63,12 @@ Catalog tables describe replay acquisitions, extraction versions/configuration, 
 All language tooling runs in containers:
 
 ```sh
-docker compose build test parser
-docker compose run --rm e2e
+docker compose build test parser e2e
+docker compose up --detach --build --wait web parser-worker
+docker compose run --rm --no-deps e2e
 ```
 
-The Node test image covers IDs, manifests, checksums, locking, migrations, saved-query safety, job recovery, read-only SQL restrictions, atomic rollback, idempotency, and both analysis queries. The Playwright image checks the main workflow at a phone-sized viewport against the healthy web service. The parser image build compiles the Clarity exporter; its focused Java tests can be run with the Gradle builder target. A real replay fixture is intentionally kept outside Git.
+The Node test image covers IDs, manifests, checksums, bounded replay retries, locking, migrations, saved-query safety, job recovery, read-only SQL restrictions, atomic rollback, idempotency, and both analysis queries. The Playwright image checks the main workflow at a phone-sized viewport against the healthy web service. The parser image build compiles and tests the Clarity exporter. A real replay fixture is intentionally kept outside Git.
 
 The parser and loader run without network access and with reduced container privileges. These controls reduce exposure; Docker is not a complete security boundary.
 
