@@ -76,8 +76,8 @@ async function stage(id: string, rows: Record<string, string>): Promise<void> {
   const now = new Date().toISOString();
   await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
     schemaVersion: 1, extractionId: id, matchId: matchId.toString(), replaySha256,
-    parser: { name: "clarity", version: "4.0.1" }, exporterVersion: "0.1.0",
-    config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 8_589_934_592, maxRecords: 50_000_000, timeoutSeconds: 1_800 },
+    parser: { name: "clarity", version: "4.0.1" }, exporterVersion: "0.1.2",
+    config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 12_884_901_888, maxRecords: 50_000_000, timeoutSeconds: 1_800 },
     startedAt: now, completedAt: now, elapsedMs: 1, files, counts: {},
   }));
 }

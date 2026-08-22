@@ -36,6 +36,10 @@ final class ReplayExporter {
     private long entityInstanceSequence;
     private Integer netTick;
     private Double gameTime;
+    private Double gameStartTime;
+    private long totalPausedTicks;
+    private boolean paused;
+    private float millisPerTick;
     private double nextCheckpoint;
     private boolean clockInitialized;
     private int demoTick;
@@ -63,6 +67,7 @@ final class ReplayExporter {
     public void onNetTick(Context context, CommonNetworkBaseTypes.CNETMsg_Tick message) {
         touch(context);
         netTick = message.getTick();
+        refreshDerivedGameTime();
     }
 
     @OnEntityCreated
@@ -204,24 +209,47 @@ final class ReplayExporter {
 
     private void observeClock(List<Property> properties) {
         for (Property property : properties) {
-            if (property.value() instanceof Number number &&
-                    (property.path().equals("m_fGameTime") || property.path().endsWith(".m_fGameTime"))) {
-                double observed = number.doubleValue();
-                if (Double.isFinite(observed)) {
-                    gameTime = observed;
-                    if (!clockInitialized) {
-                        double interval = config.checkpointIntervalSeconds();
-                        nextCheckpoint = (Math.floor(observed / interval) + 1.0) * interval;
-                        clockInitialized = true;
+            if (property.value() instanceof Number number) {
+                if (property.path().equals("m_fGameTime") || property.path().endsWith(".m_fGameTime")) {
+                    setGameTime(number.doubleValue());
+                } else if (property.path().endsWith(".m_flGameStartTime")) {
+                    double observed = number.doubleValue();
+                    if (Double.isFinite(observed) && observed > 0) {
+                        gameStartTime = observed;
                     }
+                } else if (property.path().endsWith(".m_nTotalPausedTicks")) {
+                    totalPausedTicks = Math.max(0, number.longValue());
                 }
+            } else if (property.value() instanceof Boolean value
+                    && property.path().endsWith(".m_bGamePaused")) {
+                paused = value;
             }
         }
+        refreshDerivedGameTime();
     }
 
     private void touch(Context context) {
         demoTick = context.getTick();
+        millisPerTick = context.getMillisPerTick();
+        refreshDerivedGameTime();
         if (Instant.now().isAfter(deadline)) throw new ExportLimitException("parser timeout exceeded: " + config.timeoutSeconds() + " seconds");
+    }
+
+    private void refreshDerivedGameTime() {
+        if (paused || gameStartTime == null || netTick == null || millisPerTick <= 0) return;
+        double observed = netTick * millisPerTick / 1000.0 - gameStartTime
+                - totalPausedTicks * millisPerTick / 1000.0;
+        setGameTime(observed);
+    }
+
+    private void setGameTime(double observed) {
+        if (!Double.isFinite(observed)) return;
+        gameTime = observed;
+        if (!clockInitialized) {
+            double interval = config.checkpointIntervalSeconds();
+            nextCheckpoint = (Math.floor(observed / interval) + 1.0) * interval;
+            clockInitialized = true;
+        }
     }
 
     private long nextSequence() { return ++sequence; }

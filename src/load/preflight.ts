@@ -3,10 +3,10 @@ import { paths } from "../config.js";
 import { openWarehouse } from "../db/database.js";
 import { withWarehouseLock } from "../db/lock.js";
 
-const parser = { name: "clarity", version: "4.0.1", exporterVersion: "0.1.0" } as const;
+const parser = { name: "clarity", version: "4.0.1", exporterVersion: "0.1.2" } as const;
 const config = {
   maxInputBytes: 2_147_483_648,
-  maxOutputBytes: 8_589_934_592,
+  maxOutputBytes: 12_884_901_888,
   maxRecords: 50_000_000,
   timeoutSeconds: 1_800,
   checkpointIntervalSeconds: 30,

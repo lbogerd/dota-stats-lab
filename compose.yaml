@@ -36,7 +36,7 @@ services:
     cpus: 2.0
     pids_limit: 256
     tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=2304m,mode=1777
+      - /tmp:rw,exec,nosuid,nodev,size=2304m,mode=1777
     volumes:
       - type: volume
         source: replays
@@ -59,7 +59,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1536m
+    mem_limit: 4g
     cpus: 2.0
     pids_limit: 256
     tmpfs:

@@ -5,12 +5,14 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
+import org.apache.commons.compress.compressors.zstandard.ZstdCompressorInputStream;
 import skadistats.clarity.processor.runner.SimpleRunner;
 import skadistats.clarity.source.MappedFileSource;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.BufferedInputStream;
 import java.math.BigInteger;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -26,7 +28,7 @@ import java.util.UUID;
 public final class Main {
     static final String PARSER_NAME = "clarity";
     static final String PARSER_VERSION = "4.0.1";
-    static final String EXPORTER_VERSION = "0.1.0";
+    static final String EXPORTER_VERSION = "0.1.2";
     private static final BigInteger UINT64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
     private static final ObjectMapper JSON = new ObjectMapper()
             .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
@@ -162,7 +164,8 @@ public final class Main {
     private static void decompress(Path source, Path target, long maxBytes) throws IOException {
         long written = 0;
         try (InputStream raw = Files.newInputStream(source);
-             InputStream in = new BZip2CompressorInputStream(raw, true);
+             BufferedInputStream buffered = new BufferedInputStream(raw);
+             InputStream in = compressionStream(buffered);
              OutputStream out = Files.newOutputStream(target)) {
             byte[] buffer = new byte[1024 * 1024];
             int read;
@@ -172,6 +175,20 @@ public final class Main {
                 out.write(buffer, 0, read);
             }
         }
+    }
+
+    private static InputStream compressionStream(BufferedInputStream input) throws IOException {
+        input.mark(4);
+        byte[] magic = input.readNBytes(4);
+        input.reset();
+        if (magic.length >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h') {
+            return new BZip2CompressorInputStream(input, true);
+        }
+        if (magic.length == 4 && (magic[0] & 0xff) == 0x28 && (magic[1] & 0xff) == 0xb5
+                && (magic[2] & 0xff) == 0x2f && (magic[3] & 0xff) == 0xfd) {
+            return new ZstdCompressorInputStream(input);
+        }
+        throw new IOException("replay uses an unsupported compression format");
     }
 
     private static void writeJsonAtomically(Path target, Object value) throws IOException {
