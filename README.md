@@ -74,7 +74,7 @@ The parser manifest and extraction catalog deliberately describe two different b
 
 As a result, manifest counts and stored counts are not expected to match. Voice and presentation messages, selected non-gameplay entities, entity `update` events, interval checkpoints, and BLOBs without a retained owner are exported temporarily but are not permanent warehouse rows. Entity property updates remain the append-only history used for state reconstruction.
 
-See [STORAGE_MEASUREMENT.md](STORAGE_MEASUREMENT.md) for the clean-warehouse measurement procedure and report template.
+See [STORAGE_MEASUREMENT.md](STORAGE_MEASUREMENT.md) for the clean-warehouse measurement method and results.
 
 ## Tests
 
@@ -92,7 +92,7 @@ The parser and loader run without network access and with reduced container priv
 
 ## Development notes
 
-- Treat applied files in `src/db/migrations` as immutable; add a later numbered migration for schema changes. The storage-policy baseline requires a one-time complete development-warehouse reset rather than an upgrade of an existing warehouse.
+- Treat applied files in `src/db/migrations` as immutable. Add a later numbered migration for schema changes.
 - Bump the exporter version in both the Java exporter and loader preflight whenever parser output semantics change. Extraction identity depends on this version and the extraction configuration.
 - Keep parser-native paths and values in raw storage. Put friendly names and derived Dota statistics in analysis views and macros, not in raw tables.
 - Failed staging directories are intentionally retained for diagnosis. Once investigated, they can be removed from the `dota-stats-staging` volume without affecting cached replays or committed warehouse data.

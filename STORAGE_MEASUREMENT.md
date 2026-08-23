@@ -1,22 +1,24 @@
-# Storage measurement
+# Storage reduction report
 
-This worksheet compares one known replay on the unfiltered baseline and on the filtered-storage revision. Keep the replay checksum and parser configuration identical between runs. Do not treat parser-output bytes as permanent DuckDB storage: report them and peak staging usage separately.
+This report compares one known replay on the unfiltered baseline and the filtered-storage revision. Both runs used the same replay checksum and parser configuration.
 
-Leave a value as `not measured` until it has been observed. Do not estimate missing results.
+The report gives permanent DuckDB storage and temporary staging storage as separate values.
 
-## Clean-run procedure
+## Measurement method
 
-Run these steps once on the unfiltered baseline and once on the filtered-storage revision.
+The test used these steps for each revision:
 
-1. Record the Git revision, match ID, replay SHA-256, parser/exporter versions, and parser configuration.
-2. Stop warehouse users with `docker compose stop web parser-worker`.
-3. Confirm the exact Docker volume names with `docker volume ls`. Delete and recreate only the development warehouse volume and the project staging volume. Keep `dota-stats-replays` and `dota-stats-queries`.
-4. Build the revision and start the required services.
-5. Monitor the staging volume from before parsing until successful loader cleanup, recording its highest observed byte count. The sampling interval and command belong in the report because sampling can miss a short-lived peak.
-6. Ingest the known match once. Do not ingest any other match into the measurement warehouse.
-7. Confirm that the warehouse contains exactly one successful extraction, run the integrity checks below, checkpoint DuckDB, and then collect sizes and counts.
+1. Record the revision, replay details, parser version, exporter version, and parser configuration.
+2. Stop all warehouse users.
+3. Delete and recreate only the warehouse and staging volumes.
+4. Keep the replay and saved-query volumes.
+5. Build the revision.
+6. Measure staging use every two seconds during one ingestion.
+7. Confirm that the warehouse contains one successful extraction.
+8. Run the integrity checks and checkpoint DuckDB.
+9. Collect the file sizes, row counts, and block counts.
 
-The storage-policy schema changes the baseline migration and does not upgrade an already initialized database. A clean warehouse is therefore required. Never use `docker compose down --volumes` for this procedure: that makes the intended volume boundary harder to review.
+The storage-policy change modifies the baseline migration. It does not upgrade an initialized warehouse. Existing development installations need a clean warehouse before they use this revision.
 
 ## Metadata and sizes
 
@@ -38,7 +40,7 @@ The storage-policy schema changes the baseline migration and does not upgrade an
 | `pragma_database_size()` used blocks | 15,766 | 4,546 |
 | `pragma_database_size()` free blocks | 0 | 0 |
 
-Calculate permanent reduction only after both DuckDB file sizes are recorded:
+The comparison uses this calculation:
 
 ```text
 permanent bytes removed = baseline DuckDB bytes - filtered DuckDB bytes
@@ -51,7 +53,7 @@ The peak staging figures describe temporary capacity requirements and must not b
 
 `manifest.files.*.records` counts exported parser rows. `record_counts` counts rows retained in DuckDB. `output_size_bytes` is the sum of exported NDJSON file sizes, not the DuckDB file size.
 
-Collect the catalog values without flattening away their meaning:
+The following query returns the catalog values without changing their meaning:
 
 ```sql
 SELECT
@@ -68,7 +70,7 @@ FROM catalog.extractions
 WHERE status = 'succeeded';
 ```
 
-Collect the stored counts directly as a cross-check of `record_counts` (replace `EXTRACTION_ID`):
+The following query checks `record_counts`. Replace `EXTRACTION_ID` with the measured extraction ID.
 
 ```sql
 SELECT 'records' AS row_family, count(*) AS stored_rows
@@ -103,14 +105,14 @@ ORDER BY row_family;
 
 ## DuckDB size and raw-table blocks
 
-Flush a stable on-disk state before reading the database file size:
+The test flushed a stable on-disk state before it read the database file size:
 
 ```sql
 CHECKPOINT;
 SELECT * FROM pragma_database_size();
 ```
 
-Run `pragma_storage_info` for every raw table. Count only persistent block IDs; `block_id = -1` is not a persistent data block. A block can contain segments from more than one column, so `count(DISTINCT block_id)` avoids double-counting within a table. Per-table block counts still must not be added to infer total database bytes because DuckDB may share a block between small tables.
+The test ran `pragma_storage_info` for every raw table. It counted only persistent block IDs. A `block_id` value of `-1` does not identify a persistent block. DuckDB can share a block between small tables. Thus, the sum of the table values does not give the database size.
 
 ```sql
 SELECT 'raw.records' AS table_name,
