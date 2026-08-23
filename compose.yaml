@@ -30,7 +30,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1g
+    mem_limit: 4g
     cpus: 1.0
     pids_limit: 128
     ports:
