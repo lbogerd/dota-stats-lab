@@ -6,6 +6,12 @@ import { migrate, openWarehouse } from "../db/database.js";
 import { withWarehouseLock } from "../db/lock.js";
 import { jsonStringify } from "../lib/json.js";
 import { stagedFiles, validateManifest, type Manifest } from "./manifest.js";
+import {
+  REJECTED_ENTITY_CLASSES,
+  REJECTED_RECORD_TYPES,
+  STORED_CHECKPOINT_KINDS,
+  STORED_ENTITY_EVENT_TYPES,
+} from "./storage-policy.js";
 
 export type LoadResult = { extractionId: string; status: "loaded" | "already_loaded" };
 
@@ -39,11 +45,15 @@ export async function loadExtraction(matchId: bigint): Promise<LoadResult> {
       try {
         await insertCatalog(database.connection, manifest, acquisition);
         await importStagedFiles(database.connection, extractionDir, manifest);
-        await validateImportedRows(database.connection, manifest);
+        const storedCounts = await validateImportedRows(database.connection, extractionDir, manifest);
         await database.connection.run(
           `UPDATE catalog.extractions SET status = 'succeeded', completed_at = current_timestamp,
-             load_elapsed_ms = $elapsed WHERE extraction_id = $id`,
-          { elapsed: BigInt(Math.max(0, Math.round(performance.now() - loadStarted))), id: manifest.extractionId },
+             load_elapsed_ms = $elapsed, record_counts = $counts::JSON WHERE extraction_id = $id`,
+          {
+            elapsed: BigInt(Math.max(0, Math.round(performance.now() - loadStarted))),
+            counts: jsonStringify(storedCounts),
+            id: manifest.extractionId,
+          },
         );
         await database.connection.run("COMMIT");
       } catch (error) {
@@ -121,19 +131,63 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
       exporterVersion: manifest.exporterVersion, config: jsonStringify(manifest.config),
       interval: checkpointInterval, limit: BigInt(outputLimit), startedAt: manifest.startedAt,
       parseMs: BigInt(Math.max(0, Math.round(manifest.elapsedMs))), outputBytes: BigInt(totalBytes),
-      counts: jsonStringify(manifest.counts), manifest: jsonStringify(manifest),
+      counts: jsonStringify({}), manifest: jsonStringify(manifest),
     },
   );
 }
 
 async function importStagedFiles(connection: DuckDBConnection, dir: string, manifest: Manifest): Promise<void> {
+  const rejectedRecordTypes = sqlStringList(REJECTED_RECORD_TYPES);
+  const rejectedEntityClasses = sqlStringList(REJECTED_ENTITY_CLASSES);
+  const storedEntityEventTypes = sqlStringList(STORED_ENTITY_EVENT_TYPES);
+  const storedCheckpointKinds = sqlStringList(STORED_CHECKPOINT_KINDS);
   const imports: Array<[keyof typeof stagedFiles, string]> = [
-    ["records", `INSERT INTO raw.records SELECT extractionId, sequence::UBIGINT, demoTick, netTick, gameTime, category, recordType, payload::JSON FROM read_ndjson_auto('__FILE__')`],
-    ["blobs", `INSERT INTO raw.record_blobs SELECT extractionId, sequence::UBIGINT, demoTick, netTick, gameTime, blobId, recordSequence::UBIGINT, fieldPath, from_base64(valueBase64) FROM read_ndjson_auto('__FILE__')`],
-    ["entityInstances", `INSERT INTO raw.entity_instances SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, entityIndex::UINTEGER, serial::UINTEGER, handle::UBIGINT, classId::INTEGER, className, demoTick, netTick, gameTime FROM read_ndjson_auto('__FILE__')`],
-    ["entityEvents", `INSERT INTO raw.entity_events SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, eventType, demoTick, netTick, gameTime, to_json(changedPropertyPaths), synthetic FROM read_ndjson_auto('__FILE__')`],
-    ["propertyUpdates", `INSERT INTO raw.entity_property_updates SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, propertyPath, valueType, coalesce(to_json(value), 'null'::JSON), demoTick, netTick, gameTime FROM read_ndjson_auto('__FILE__')`],
-    ["checkpoints", `INSERT INTO raw.entity_checkpoints SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, checkpointKind, demoTick, netTick, gameTime, checkpointGameTime, to_json(properties) FROM read_ndjson_auto('__FILE__')`],
+    ["records", `INSERT INTO raw.records
+      SELECT extractionId, sequence::UBIGINT, demoTick, netTick, gameTime, category, recordType, payload::JSON
+      FROM read_ndjson_auto('__FILE__')
+      WHERE recordType NOT IN (${rejectedRecordTypes}) OR recordType IS NULL`],
+    ["entityInstances", `INSERT INTO raw.entity_instances
+      SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, entityIndex::UINTEGER, serial::UINTEGER,
+        handle::UBIGINT, classId::INTEGER, className, demoTick, netTick, gameTime
+      FROM read_ndjson_auto('__FILE__')
+      WHERE className NOT IN (${rejectedEntityClasses}) OR className IS NULL`],
+    ["entityEvents", `INSERT INTO raw.entity_events
+      SELECT source.extractionId, source.sequence::UBIGINT, source.entityInstanceId::UBIGINT, source.eventType,
+        source.demoTick, source.netTick, source.gameTime, source.synthetic
+      FROM read_ndjson_auto('__FILE__') AS source
+      JOIN raw.entity_instances AS instance
+        ON instance.extraction_id = source.extractionId
+       AND instance.entity_instance_id = source.entityInstanceId::UBIGINT
+      WHERE source.eventType IN (${storedEntityEventTypes})`],
+    ["propertyUpdates", `INSERT INTO raw.entity_property_updates
+      SELECT source.extractionId, source.sequence::UBIGINT, source.entityInstanceId::UBIGINT, source.propertyPath,
+        source.valueType, coalesce(to_json(source.value), 'null'::JSON), source.demoTick, source.netTick, source.gameTime
+      FROM read_ndjson_auto('__FILE__') AS source
+      JOIN raw.entity_instances AS instance
+        ON instance.extraction_id = source.extractionId
+       AND instance.entity_instance_id = source.entityInstanceId::UBIGINT`],
+    ["checkpoints", `INSERT INTO raw.entity_checkpoints
+      SELECT source.extractionId, source.sequence::UBIGINT, source.entityInstanceId::UBIGINT, source.checkpointKind,
+        source.demoTick, source.netTick, source.gameTime, source.checkpointGameTime, to_json(source.properties)
+      FROM read_ndjson_auto('__FILE__') AS source
+      JOIN raw.entity_instances AS instance
+        ON instance.extraction_id = source.extractionId
+       AND instance.entity_instance_id = source.entityInstanceId::UBIGINT
+      WHERE source.checkpointKind IN (${storedCheckpointKinds})`],
+    ["blobs", `INSERT INTO raw.record_blobs
+      SELECT source.extractionId, source.sequence::UBIGINT, source.demoTick, source.netTick, source.gameTime,
+        source.blobId, source.recordSequence::UBIGINT, source.fieldPath, from_base64(source.valueBase64)
+      FROM read_ndjson_auto('__FILE__') AS source
+      WHERE EXISTS (
+        SELECT 1 FROM raw.records AS owner
+        WHERE owner.extraction_id = source.extractionId AND owner.sequence = source.recordSequence::UBIGINT
+        UNION ALL
+        SELECT 1 FROM raw.entity_property_updates AS owner
+        WHERE owner.extraction_id = source.extractionId AND owner.sequence = source.recordSequence::UBIGINT
+        UNION ALL
+        SELECT 1 FROM raw.entity_checkpoints AS owner
+        WHERE owner.extraction_id = source.extractionId AND owner.sequence = source.recordSequence::UBIGINT
+      )`],
   ];
   for (const [logical, template] of imports) {
     if (manifest.files[logical].records === 0) continue;
@@ -146,7 +200,25 @@ async function importStagedFiles(connection: DuckDBConnection, dir: string, mani
   }
 }
 
-async function validateImportedRows(connection: DuckDBConnection, manifest: Manifest): Promise<void> {
+type StoredCounts = {
+  records: number;
+  blobs: number;
+  entityInstances: number;
+  entityEvents: number;
+  propertyUpdates: number;
+  checkpoints: number;
+  total: number;
+};
+
+async function validateImportedRows(
+  connection: DuckDBConnection,
+  dir: string,
+  manifest: Manifest,
+): Promise<StoredCounts> {
+  const rejectedRecordTypes = sqlStringList(REJECTED_RECORD_TYPES);
+  const rejectedEntityClasses = sqlStringList(REJECTED_ENTITY_CLASSES);
+  const storedEntityEventTypes = sqlStringList(STORED_ENTITY_EVENT_TYPES);
+  const storedCheckpointKinds = sqlStringList(STORED_CHECKPOINT_KINDS);
   const result = await connection.runAndReadAll(
     `SELECT
        (SELECT count(*) FROM raw.records WHERE extraction_id = $id) AS records,
@@ -155,24 +227,128 @@ async function validateImportedRows(connection: DuckDBConnection, manifest: Mani
        (SELECT count(*) FROM raw.entity_events WHERE extraction_id = $id) AS entity_events,
        (SELECT count(*) FROM raw.entity_property_updates WHERE extraction_id = $id) AS property_updates,
        (SELECT count(DISTINCT sequence) FROM raw.entity_property_updates WHERE extraction_id = $id) AS property_update_sequences,
-       (SELECT count(*) FROM raw.entity_checkpoints WHERE extraction_id = $id) AS checkpoints`,
+       (SELECT count(*) FROM raw.entity_checkpoints WHERE extraction_id = $id) AS checkpoints,
+       (SELECT count(*) FROM raw.records WHERE extraction_id = $id AND record_type IN (${rejectedRecordTypes})) AS rejected_records,
+       (SELECT count(*) FROM raw.entity_instances WHERE extraction_id = $id AND class_name IN (${rejectedEntityClasses})) AS rejected_entities,
+       (SELECT count(*) FROM raw.entity_events WHERE extraction_id = $id AND event_type NOT IN (${storedEntityEventTypes})) AS rejected_events,
+       (SELECT count(*) FROM raw.entity_checkpoints WHERE extraction_id = $id AND checkpoint_kind NOT IN (${storedCheckpointKinds})) AS rejected_checkpoints,
+       (SELECT count(*) FROM raw.entity_events AS child
+          LEFT JOIN raw.entity_instances AS owner
+            ON owner.extraction_id = child.extraction_id
+           AND owner.entity_instance_id = child.entity_instance_id
+          WHERE child.extraction_id = $id AND owner.entity_instance_id IS NULL) AS orphaned_entity_events,
+       (SELECT count(*) FROM raw.entity_property_updates AS child
+          LEFT JOIN raw.entity_instances AS owner
+            ON owner.extraction_id = child.extraction_id
+           AND owner.entity_instance_id = child.entity_instance_id
+          WHERE child.extraction_id = $id AND owner.entity_instance_id IS NULL) AS orphaned_property_updates,
+       (SELECT count(*) FROM raw.entity_checkpoints AS child
+          LEFT JOIN raw.entity_instances AS owner
+            ON owner.extraction_id = child.extraction_id
+           AND owner.entity_instance_id = child.entity_instance_id
+          WHERE child.extraction_id = $id AND owner.entity_instance_id IS NULL) AS orphaned_checkpoints,
+       (SELECT count(*) FROM raw.record_blobs AS blob
+          WHERE blob.extraction_id = $id AND NOT EXISTS (
+            SELECT 1 FROM raw.records AS owner
+            WHERE owner.extraction_id = blob.extraction_id AND owner.sequence = blob.record_sequence
+            UNION ALL
+            SELECT 1 FROM raw.entity_property_updates AS owner
+            WHERE owner.extraction_id = blob.extraction_id AND owner.sequence = blob.record_sequence
+            UNION ALL
+            SELECT 1 FROM raw.entity_checkpoints AS owner
+            WHERE owner.extraction_id = blob.extraction_id AND owner.sequence = blob.record_sequence
+          )) AS orphaned_blobs`,
     { id: manifest.extractionId },
   );
   const row = result.getRowObjects()[0] as Record<string, bigint>;
+  const importedCount = (name: string): bigint => {
+    const count = row[name];
+    if (count === undefined) throw new Error(`Missing imported count: ${name}`);
+    return count;
+  };
+  for (const name of [
+    "rejected_records",
+    "rejected_entities",
+    "rejected_events",
+    "rejected_checkpoints",
+    "orphaned_entity_events",
+    "orphaned_property_updates",
+    "orphaned_checkpoints",
+    "orphaned_blobs",
+  ]) {
+    if (importedCount(name) !== 0n) throw new Error(`Imported rows violate storage policy: ${name}`);
+  }
+
   const expected: Record<string, bigint> = {
-    records: BigInt(manifest.files.records.records),
-    blobs: BigInt(manifest.files.blobs.records),
-    entity_instances: BigInt(manifest.files.entityInstances.records),
-    entity_events: BigInt(manifest.files.entityEvents.records),
-    property_updates: BigInt(manifest.files.propertyUpdates.records),
-    checkpoints: BigInt(manifest.files.checkpoints.records),
+    records: await stagedCount(connection, dir, manifest, "records", `recordType NOT IN (${rejectedRecordTypes}) OR recordType IS NULL`),
+    entity_instances: await stagedCount(connection, dir, manifest, "entityInstances", `className NOT IN (${rejectedEntityClasses}) OR className IS NULL`),
+    entity_events: await stagedCount(connection, dir, manifest, "entityEvents", `eventType IN (${storedEntityEventTypes})`, true),
+    property_updates: await stagedCount(connection, dir, manifest, "propertyUpdates", undefined, true),
+    checkpoints: await stagedCount(connection, dir, manifest, "checkpoints", `checkpointKind IN (${storedCheckpointKinds})`, true),
+    blobs: await stagedBlobCount(connection, dir, manifest),
   };
   for (const [name, count] of Object.entries(expected)) {
-    if (row[name] !== count) throw new Error(`Imported ${name} count does not match manifest`);
+    if (importedCount(name) !== count) throw new Error(`Imported ${name} count does not match storage policy`);
   }
-  if (row.property_update_sequences !== expected.property_updates) {
+  if (importedCount("property_update_sequences") !== expected.property_updates) {
     throw new Error("Imported property update sequences are not unique");
   }
+  const counts = {
+    records: Number(importedCount("records")),
+    blobs: Number(importedCount("blobs")),
+    entityInstances: Number(importedCount("entity_instances")),
+    entityEvents: Number(importedCount("entity_events")),
+    propertyUpdates: Number(importedCount("property_updates")),
+    checkpoints: Number(importedCount("checkpoints")),
+  };
+  const total = counts.records + counts.blobs + counts.entityInstances + counts.entityEvents
+    + counts.propertyUpdates + counts.checkpoints;
+  return { ...counts, total };
+}
+
+async function stagedCount(
+  connection: DuckDBConnection,
+  dir: string,
+  manifest: Manifest,
+  logical: keyof typeof stagedFiles,
+  predicate?: string,
+  joinRetainedEntity = false,
+): Promise<bigint> {
+  if (manifest.files[logical].records === 0) return 0n;
+  const source = sqlLiteral(path.join(dir, stagedFiles[logical]));
+  const join = joinRetainedEntity
+    ? `JOIN raw.entity_instances AS instance
+         ON instance.extraction_id = staged.extractionId
+        AND instance.entity_instance_id = staged.entityInstanceId::UBIGINT`
+    : "";
+  const where = predicate === undefined ? "" : `WHERE ${predicate}`;
+  const result = await connection.runAndReadAll(
+    `SELECT count(*) AS count FROM read_ndjson_auto('${source}') AS staged ${join} ${where}`,
+  );
+  return (result.getRowObjects()[0] as { count: bigint }).count;
+}
+
+async function stagedBlobCount(
+  connection: DuckDBConnection,
+  dir: string,
+  manifest: Manifest,
+): Promise<bigint> {
+  if (manifest.files.blobs.records === 0) return 0n;
+  const source = sqlLiteral(path.join(dir, stagedFiles.blobs));
+  const result = await connection.runAndReadAll(
+    `SELECT count(*) AS count FROM read_ndjson_auto('${source}') AS staged
+     WHERE EXISTS (
+       SELECT 1 FROM raw.records AS owner
+       WHERE owner.extraction_id = staged.extractionId AND owner.sequence = staged.recordSequence::UBIGINT
+       UNION ALL
+       SELECT 1 FROM raw.entity_property_updates AS owner
+       WHERE owner.extraction_id = staged.extractionId AND owner.sequence = staged.recordSequence::UBIGINT
+       UNION ALL
+       SELECT 1 FROM raw.entity_checkpoints AS owner
+       WHERE owner.extraction_id = staged.extractionId AND owner.sequence = staged.recordSequence::UBIGINT
+     )`,
+  );
+  return (result.getRowObjects()[0] as { count: bigint }).count;
 }
 
 async function recordFailure(connection: DuckDBConnection, manifest: Manifest, error: unknown): Promise<void> {
@@ -203,3 +379,6 @@ function numberConfig(config: Record<string, unknown>, key: string, fallback: nu
 }
 
 function sqlLiteral(value: string): string { return value.replaceAll("'", "''"); }
+function sqlStringList(values: ReadonlySet<string>): string {
+  return [...values].map((value) => `'${sqlLiteral(value)}'`).join(", ");
+}

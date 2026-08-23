@@ -45,6 +45,90 @@ test("loader imports atomically, supports analysis macros, and is idempotent", a
   assert.equal(await extractionAlreadyLoaded(matchId, replaySha256), true);
 });
 
+test("loader stores only retained rows and catalogs stored counts", async () => {
+  const filteredId = "e".repeat(64);
+  const filteredMatchId = 44n;
+  const row = (value: Record<string, unknown>): string => `${JSON.stringify({ extractionId: filteredId, ...value })}\n`;
+  const blob = (sequence: number, recordSequence: number, value: string): string => row({
+    sequence, demoTick: 10, netTick: 20, gameTime: 1,
+    blobId: createHash("sha256").update(value).digest("hex"), recordSequence,
+    fieldPath: "bytes", valueBase64: Buffer.from(value).toString("base64"),
+  });
+  const rows: Record<string, string> = {
+    "records.ndjson": [
+      row({ sequence: 101, demoTick: 10, netTick: 20, gameTime: 1, category: "message", recordType: "CMsgDOTACombatLogEntry", payload: {} }),
+      row({ sequence: 102, demoTick: 10, netTick: 20, gameTime: 1, category: "message", recordType: "CSVCMsg_VoiceData", payload: {} }),
+      row({ sequence: 103, demoTick: 10, netTick: 20, gameTime: 1, category: "message", recordType: "CDOTAUserMsg_SpectatorPlayerUnitOrders", payload: {} }),
+    ].join(""),
+    "blobs.ndjson": [
+      blob(201, 101, "record-retained"),
+      blob(202, 102, "record-rejected"),
+      blob(203, 501, "property-retained"),
+      blob(204, 502, "entity-rejected"),
+      blob(205, 601, "checkpoint-retained"),
+      blob(206, 602, "checkpoint-interval"),
+      blob(207, 999, "missing-owner"),
+    ].join(""),
+    "entity_instances.ndjson": [
+      row({ sequence: 301, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "11", entityIndex: 11, serial: 1, handle: 16395, classId: 2, className: "CTest" }),
+      row({ sequence: 302, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "12", entityIndex: 12, serial: 1, handle: 16396, classId: 3, className: "CParticleSystem" }),
+      row({ sequence: 303, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "13", entityIndex: 13, serial: 1, handle: 16397, classId: 4, className: "CDOTA_NPC_Observer_Ward" }),
+    ].join(""),
+    "entity_events.ndjson": [
+      row({ sequence: 401, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "11", eventType: "create", changedPropertyPaths: [], synthetic: false }),
+      row({ sequence: 402, demoTick: 11, netTick: 21, gameTime: 2, entityInstanceId: "11", eventType: "update", changedPropertyPaths: ["m_value"], synthetic: false }),
+      row({ sequence: 403, demoTick: 12, netTick: 22, gameTime: 3, entityInstanceId: "11", eventType: "delete", changedPropertyPaths: [], synthetic: true }),
+      row({ sequence: 404, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "12", eventType: "create", changedPropertyPaths: [], synthetic: false }),
+      row({ sequence: 405, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "13", eventType: "create", changedPropertyPaths: [], synthetic: false }),
+    ].join(""),
+    "property_updates.ndjson": [
+      row({ sequence: 501, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "11", propertyPath: "m_value", valueType: "int32", value: 7 }),
+      row({ sequence: 502, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "12", propertyPath: "m_value", valueType: "int32", value: 8 }),
+      row({ sequence: 503, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "13", propertyPath: "m_value", valueType: "int32", value: 9 }),
+    ].join(""),
+    "checkpoints.ndjson": [
+      row({ sequence: 601, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "11", checkpointKind: "creation", checkpointGameTime: 1, properties: [] }),
+      row({ sequence: 602, demoTick: 11, netTick: 21, gameTime: 2, entityInstanceId: "11", checkpointKind: "interval", checkpointGameTime: 2, properties: [] }),
+      row({ sequence: 603, demoTick: 12, netTick: 22, gameTime: 3, entityInstanceId: "11", checkpointKind: "completion", checkpointGameTime: 3, properties: [] }),
+      row({ sequence: 604, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "12", checkpointKind: "creation", checkpointGameTime: 1, properties: [] }),
+      row({ sequence: 605, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "13", checkpointKind: "completion", checkpointGameTime: 1, properties: [] }),
+    ].join(""),
+  };
+  await stage(filteredId, rows, filteredMatchId);
+  assert.equal((await loadExtraction(filteredMatchId)).status, "loaded");
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(
+      `SELECT
+         (SELECT list(record_type ORDER BY sequence) FROM raw.records WHERE extraction_id = $id) AS record_types,
+         (SELECT list(class_name ORDER BY sequence) FROM raw.entity_instances WHERE extraction_id = $id) AS entity_classes,
+         (SELECT list(event_type ORDER BY sequence) FROM raw.entity_events WHERE extraction_id = $id) AS event_types,
+         (SELECT list(synthetic ORDER BY sequence) FROM raw.entity_events WHERE extraction_id = $id) AS synthetic_events,
+         (SELECT count(*)::INTEGER FROM raw.entity_property_updates WHERE extraction_id = $id) AS property_updates,
+         (SELECT list(checkpoint_kind ORDER BY sequence) FROM raw.entity_checkpoints WHERE extraction_id = $id) AS checkpoint_kinds,
+         (SELECT count(*)::INTEGER FROM raw.record_blobs WHERE extraction_id = $id) AS blobs,
+         (SELECT record_counts::VARCHAR FROM catalog.extractions WHERE extraction_id = $id) AS record_counts,
+         (SELECT json_extract_string(manifest, '$.files.records.records') FROM catalog.extractions WHERE extraction_id = $id) AS exported_records`,
+      { id: filteredId },
+    );
+    const stored = result.getRowObjectsJson()[0] as Record<string, unknown>;
+    assert.deepEqual(stored.record_types, ["CMsgDOTACombatLogEntry", "CDOTAUserMsg_SpectatorPlayerUnitOrders"]);
+    assert.deepEqual(stored.entity_classes, ["CTest", "CDOTA_NPC_Observer_Ward"]);
+    assert.deepEqual(stored.event_types, ["create", "delete", "create"]);
+    assert.deepEqual(stored.synthetic_events, [false, true, false]);
+    assert.equal(stored.property_updates, 2);
+    assert.deepEqual(stored.checkpoint_kinds, ["creation", "completion", "completion"]);
+    assert.equal(stored.blobs, 3);
+    assert.equal(stored.exported_records, "3");
+    assert.deepEqual(JSON.parse(stored.record_counts as string), {
+      records: 2, blobs: 3, entityInstances: 2, entityEvents: 3,
+      propertyUpdates: 2, checkpoints: 3, total: 15,
+    });
+  } finally { connection.closeSync(); }
+});
+
 test("malformed staged JSON rolls back raw data and retains failed staging", async () => {
   const failedId = "c".repeat(64);
   const malformed = Object.fromEntries(Object.keys(goodRows).map((name) => [name, ""])) as Record<string, string>;
@@ -57,10 +141,10 @@ test("malformed staged JSON rolls back raw data and retains failed staging", asy
   try {
     const result = await connection.runAndReadAll(
       `SELECT
-         (SELECT count(*)::INTEGER FROM raw.records) AS n,
+         (SELECT count(*)::INTEGER FROM raw.records WHERE extraction_id = '${failedId}') AS n,
          (SELECT completed_at IS NOT NULL FROM catalog.extractions WHERE extraction_id = '${failedId}') AS failure_completed`,
     );
-    assert.deepEqual(result.getRowObjectsJson(), [{ n: 1, failure_completed: true }]);
+    assert.deepEqual(result.getRowObjectsJson(), [{ n: 0, failure_completed: true }]);
   } finally { connection.closeSync(); }
 });
 
