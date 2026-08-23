@@ -25,9 +25,37 @@ async function fixture(): Promise<{ dir: string; manifest: Record<string, unknow
   return { dir, manifest };
 }
 
+async function setStagedFile(
+  dir: string,
+  manifest: Record<string, unknown>,
+  logical: keyof typeof stagedFiles,
+  body: string,
+  records: number,
+): Promise<void> {
+  await writeFile(path.join(dir, stagedFiles[logical]), body);
+  (manifest.files as Record<string, Record<string, unknown>>)[logical] = {
+    path: stagedFiles[logical],
+    sha256: createHash("sha256").update(body).digest("hex"),
+    bytes: Buffer.byteLength(body),
+    records,
+  };
+  await writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+}
+
 test("validateManifest accepts the fixed staged-file contract", async () => {
   const { dir } = await fixture();
   assert.equal((await validateManifest(dir, 42n)).matchId, "42");
+});
+
+test("validateManifest accepts checksums, bytes, and records from one staged file", async () => {
+  const { dir, manifest } = await fixture();
+  (manifest.config as Record<string, unknown>).maxOutputBytes = 100;
+  (manifest.config as Record<string, unknown>).maxRecords = 10;
+  await setStagedFile(dir, manifest, "records", "{\"id\":1}\n{\"id\":2}\n", 2);
+
+  const result = await validateManifest(dir, 42n);
+  assert.equal(result.files.records.bytes, 18);
+  assert.equal(result.files.records.records, 2);
 });
 
 test("validateManifest rejects path injection", async () => {
@@ -41,4 +69,27 @@ test("validateManifest rejects a changed staged file", async () => {
   const { dir } = await fixture();
   await writeFile(path.join(dir, stagedFiles.records), "tampered\n");
   await assert.rejects(validateManifest(dir, 42n), /Size mismatch/);
+});
+
+test("validateManifest rejects a checksum mismatch when the size is unchanged", async () => {
+  const { dir, manifest } = await fixture();
+  await setStagedFile(dir, manifest, "records", "one\n", 1);
+  (manifest.files as Record<string, Record<string, unknown>>).records!.sha256 = "c".repeat(64);
+  await writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+
+  await assert.rejects(validateManifest(dir, 42n), /Checksum mismatch for records\.ndjson/);
+});
+
+test("validateManifest rejects a record count mismatch", async () => {
+  const { dir, manifest } = await fixture();
+  await setStagedFile(dir, manifest, "records", "one\ntwo\n", 1);
+
+  await assert.rejects(validateManifest(dir, 42n), /Record count mismatch for records\.ndjson/);
+});
+
+test("validateManifest rejects a non-empty file without a final newline", async () => {
+  const { dir, manifest } = await fixture();
+  await setStagedFile(dir, manifest, "records", "one", 0);
+
+  await assert.rejects(validateManifest(dir, 42n), /NDJSON file does not end with a newline: records\.ndjson/);
 });
