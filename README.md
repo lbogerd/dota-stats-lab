@@ -74,8 +74,6 @@ The parser manifest and extraction catalog deliberately describe two different b
 
 As a result, manifest counts and stored counts are not expected to match. Voice and presentation messages, selected non-gameplay entities, entity `update` events, interval checkpoints, and BLOBs without a retained owner are exported temporarily but are not permanent warehouse rows. Entity property updates remain the append-only history used for state reconstruction.
 
-See [STORAGE_MEASUREMENT.md](STORAGE_MEASUREMENT.md) for the clean-warehouse measurement method and results.
-
 ## Tests
 
 All language tooling runs in containers:
