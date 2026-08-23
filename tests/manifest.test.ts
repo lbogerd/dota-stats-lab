@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { stagedFiles, validateManifest } from "../src/load/manifest.js";
+import { readManifest, stagedFiles, validateManifest } from "../src/load/manifest.js";
 
 async function fixture(): Promise<{ dir: string; manifest: Record<string, unknown> }> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "dota-manifest-"));
@@ -17,7 +17,7 @@ async function fixture(): Promise<{ dir: string; manifest: Record<string, unknow
   const manifest = {
     schemaVersion: 1, extractionId: "a".repeat(64), matchId: "42", replaySha256: "b".repeat(64),
     parser: { name: "clarity", version: "1" }, exporterVersion: "1",
-    config: { maxOutputBytes: 1, maxRecords: 1 },
+    config: { maxOutputBytes: 100, maxRecords: 10 },
     startedAt: new Date(0).toISOString(), completedAt: new Date(1).toISOString(), elapsedMs: 1,
     files, counts: {},
   };
@@ -69,6 +69,13 @@ test("validateManifest rejects a changed staged file", async () => {
   const { dir } = await fixture();
   await writeFile(path.join(dir, stagedFiles.records), "tampered\n");
   await assert.rejects(validateManifest(dir, 42n), /Size mismatch/);
+});
+
+test("readManifest inspects metadata without scanning staged files", async () => {
+  const { dir } = await fixture();
+  await writeFile(path.join(dir, stagedFiles.records), "tampered\n");
+
+  assert.equal((await readManifest(dir, 42n)).matchId, "42");
 });
 
 test("validateManifest rejects a checksum mismatch when the size is unchanged", async () => {

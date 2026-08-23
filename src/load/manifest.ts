@@ -29,7 +29,7 @@ export type Manifest = {
   acquisition?: Record<string, unknown>;
 };
 
-export async function validateManifest(extractionDir: string, expectedMatchId: bigint): Promise<Manifest> {
+export async function readManifest(extractionDir: string, expectedMatchId: bigint): Promise<Manifest> {
   const raw = await readFile(path.join(extractionDir, "manifest.json"), "utf8");
   const value: unknown = JSON.parse(raw);
   if (!isObject(value)) throw new Error("Manifest must be a JSON object");
@@ -55,14 +55,6 @@ export async function validateManifest(extractionDir: string, expectedMatchId: b
     const bytes = numberField(entry, "bytes");
     const records = numberField(entry, "records");
     if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(records) || records < 0) throw new Error(`Invalid counts for ${logical}`);
-    const file = path.join(extractionDir, expectedName);
-    const info = await stat(file);
-    if (!info.isFile() || info.size !== bytes) throw new Error(`Size mismatch for ${expectedName}`);
-    const actual = await inspectFile(file);
-    if (actual.bytes !== bytes) throw new Error(`Size mismatch for ${expectedName}`);
-    if (actual.sha256 !== expectedHash) throw new Error(`Checksum mismatch for ${expectedName}`);
-    if (actual.bytes > 0 && !actual.endsWithNewline) throw new Error(`NDJSON file does not end with a newline: ${expectedName}`);
-    if (actual.records !== records) throw new Error(`Record count mismatch for ${expectedName}`);
     totalBytes += bytes;
     totalRecords += records;
   }
@@ -71,6 +63,22 @@ export async function validateManifest(extractionDir: string, expectedMatchId: b
   if (totalBytes > maxOutputBytes) throw new Error("Staged files exceed manifest output limit");
   if (totalRecords > maxRecords) throw new Error("Staged files exceed manifest record limit");
   return value as unknown as Manifest;
+}
+
+export async function validateManifest(extractionDir: string, expectedMatchId: bigint): Promise<Manifest> {
+  const manifest = await readManifest(extractionDir, expectedMatchId);
+  for (const [logical, expectedName] of Object.entries(stagedFiles)) {
+    const expected = manifest.files[logical as keyof typeof stagedFiles];
+    const file = path.join(extractionDir, expectedName);
+    const info = await stat(file);
+    if (!info.isFile() || info.size !== expected.bytes) throw new Error(`Size mismatch for ${expectedName}`);
+    const actual = await inspectFile(file);
+    if (actual.bytes !== expected.bytes) throw new Error(`Size mismatch for ${expectedName}`);
+    if (actual.sha256 !== expected.sha256) throw new Error(`Checksum mismatch for ${expectedName}`);
+    if (actual.bytes > 0 && !actual.endsWithNewline) throw new Error(`NDJSON file does not end with a newline: ${expectedName}`);
+    if (actual.records !== expected.records) throw new Error(`Record count mismatch for ${expectedName}`);
+  }
+  return manifest;
 }
 
 async function inspectFile(file: string): Promise<{

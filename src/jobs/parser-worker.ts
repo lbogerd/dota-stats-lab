@@ -136,7 +136,7 @@ export async function runJavaParser(request: ParseRequest): Promise<ParserRunRes
   const outputLimit = 64 * 1024;
   const child = spawn(java, [
     "-jar", jar, request.matchId,
-    "--staging-root", paths.stagingRoot,
+    "--staging-root", paths.stagingInboxRoot,
     "--replay-sha256", request.replaySha256,
   ], { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";

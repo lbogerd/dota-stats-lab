@@ -7,10 +7,11 @@ import path from "node:path";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "dota-loader-"));
 process.env.STAGING_ROOT = path.join(root, "staging");
+process.env.STAGING_CLAIMED_ROOT = path.join(root, "staging", "claimed");
 process.env.WAREHOUSE_PATH = path.join(root, "warehouse", "dota.duckdb");
 process.env.MIGRATION_ROOT = path.resolve("src/db/migrations");
 
-const { loadExtraction } = await import("../src/load/load-extraction.js");
+const { loadClaimedExtraction } = await import("../src/load/load-extraction.js");
 const { extractionAlreadyLoaded } = await import("../src/load/preflight.js");
 const { DuckDBInstance } = await import("@duckdb/node-api");
 
@@ -28,8 +29,7 @@ const goodRows: Record<string, string> = {
 };
 
 test("loader imports atomically, supports analysis macros, and is idempotent", async () => {
-  await stage(extractionId, goodRows);
-  assert.equal((await loadExtraction(matchId)).status, "loaded");
+  assert.equal((await loadClaimedExtraction(await stage(extractionId, goodRows))).status, "loaded");
 
   const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
   const connection = await instance.connect();
@@ -40,8 +40,7 @@ test("loader imports atomically, supports analysis macros, and is idempotent", a
     assert.deepEqual(state.getRowObjectsJson(), [{ property_path: "m_value", value: "7" }]);
   } finally { connection.closeSync(); }
 
-  await stage(extractionId, goodRows);
-  assert.equal((await loadExtraction(matchId)).status, "already_loaded");
+  assert.equal((await loadClaimedExtraction(await stage(extractionId, goodRows))).status, "already_loaded");
   assert.equal(await extractionAlreadyLoaded(matchId, replaySha256), true);
 });
 
@@ -94,8 +93,7 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
       row({ sequence: 605, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "13", checkpointKind: "completion", checkpointGameTime: 1, properties: [] }),
     ].join(""),
   };
-  await stage(filteredId, rows, filteredMatchId);
-  assert.equal((await loadExtraction(filteredMatchId)).status, "loaded");
+  assert.equal((await loadClaimedExtraction(await stage(filteredId, rows, filteredMatchId))).status, "loaded");
 
   const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
   const connection = await instance.connect();
@@ -133,8 +131,8 @@ test("malformed staged JSON rolls back raw data and retains failed staging", asy
   const failedId = "c".repeat(64);
   const malformed = Object.fromEntries(Object.keys(goodRows).map((name) => [name, ""])) as Record<string, string>;
   malformed["records.ndjson"] = "{not-json}\n";
-  await stage(failedId, malformed);
-  await assert.rejects(loadExtraction(matchId));
+  const failed = await stage(failedId, malformed);
+  await assert.rejects(loadClaimedExtraction(failed));
 
   const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
   const connection = await instance.connect();
@@ -146,6 +144,7 @@ test("malformed staged JSON rolls back raw data and retains failed staging", asy
     );
     assert.deepEqual(result.getRowObjectsJson(), [{ n: 0, failure_completed: true }]);
   } finally { connection.closeSync(); }
+  assert.equal(await (await import("node:fs/promises")).stat(failed.directory).then(() => true, () => false), true);
 });
 
 test("duplicate property-update sequences roll back the extraction", async () => {
@@ -156,8 +155,8 @@ test("duplicate property-update sequences roll back the extraction", async () =>
   ));
   const propertyRows = rows["property_updates.ndjson"]!;
   rows["property_updates.ndjson"] = propertyRows + propertyRows;
-  await stage(duplicateId, rows, duplicateMatchId);
-  await assert.rejects(loadExtraction(duplicateMatchId), /sequences are not unique/);
+  const duplicate = await stage(duplicateId, rows, duplicateMatchId);
+  await assert.rejects(loadClaimedExtraction(duplicate), /sequences are not unique/);
 
   const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
   const connection = await instance.connect();
@@ -169,8 +168,14 @@ test("duplicate property-update sequences roll back the extraction", async () =>
   } finally { connection.closeSync(); }
 });
 
-async function stage(id: string, rows: Record<string, string>, stagedMatchId = matchId): Promise<void> {
-  const directory = path.join(process.env.STAGING_ROOT!, stagedMatchId.toString(), id);
+async function stage(id: string, rows: Record<string, string>, stagedMatchId = matchId): Promise<{
+  matchId: bigint;
+  claimId: string;
+  extractionId: string;
+  directory: string;
+}> {
+  const claimId = `cli-${stagedMatchId}`;
+  const directory = path.join(process.env.STAGING_CLAIMED_ROOT!, claimId, id);
   await mkdir(directory, { recursive: true });
   const files: Record<string, unknown> = {};
   const logical: Record<string, string> = {
@@ -194,4 +199,5 @@ async function stage(id: string, rows: Record<string, string>, stagedMatchId = m
     config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 12_884_901_888, maxRecords: 50_000_000, timeoutSeconds: 1_800 },
     startedAt: now, completedAt: now, elapsedMs: 1, files, counts: {},
   }));
+  return { matchId: stagedMatchId, claimId, extractionId: id, directory };
 }

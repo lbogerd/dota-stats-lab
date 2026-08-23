@@ -1,9 +1,13 @@
 import path from "node:path";
 
+const stagingRoot = process.env.STAGING_ROOT ?? "/work/staging";
+
 export const paths = {
   replayRoot: process.env.REPLAY_ROOT ?? "/data/replays",
-  stagingRoot: process.env.STAGING_ROOT ?? "/work/staging",
-  jobsRoot: process.env.JOBS_ROOT ?? path.join(process.env.STAGING_ROOT ?? "/work/staging", "jobs"),
+  stagingRoot,
+  stagingInboxRoot: process.env.STAGING_INBOX_ROOT ?? path.join(stagingRoot, "inbox"),
+  stagingClaimedRoot: process.env.STAGING_CLAIMED_ROOT ?? path.join(stagingRoot, "claimed"),
+  jobsRoot: process.env.JOBS_ROOT ?? path.join(stagingRoot, "jobs"),
   warehousePath: process.env.WAREHOUSE_PATH ?? "/data/warehouse/dota.duckdb",
   migrationRoot: process.env.MIGRATION_ROOT ?? "/app/migrations",
 };
