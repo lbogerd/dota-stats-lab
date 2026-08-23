@@ -110,11 +110,10 @@ CREATE TABLE raw.entity_events (
     extraction_id VARCHAR NOT NULL,
     sequence UBIGINT NOT NULL,
     entity_instance_id UBIGINT NOT NULL,
-    event_type VARCHAR NOT NULL CHECK (event_type IN ('create', 'update', 'delete')),
+    event_type VARCHAR NOT NULL CHECK (event_type IN ('create', 'delete')),
     demo_tick BIGINT,
     net_tick BIGINT,
     game_time DOUBLE,
-    changed_property_paths JSON NOT NULL,
     synthetic BOOLEAN NOT NULL,
     PRIMARY KEY (extraction_id, sequence),
     FOREIGN KEY (extraction_id, entity_instance_id)
@@ -151,7 +150,7 @@ CREATE TABLE raw.entity_checkpoints (
     sequence UBIGINT NOT NULL,
     entity_instance_id UBIGINT NOT NULL,
     checkpoint_kind VARCHAR NOT NULL
-        CHECK (checkpoint_kind IN ('creation', 'interval', 'completion')),
+        CHECK (checkpoint_kind IN ('creation', 'completion')),
     demo_tick BIGINT,
     net_tick BIGINT,
     game_time DOUBLE,
