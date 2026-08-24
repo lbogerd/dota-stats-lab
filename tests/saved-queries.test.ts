@@ -166,3 +166,44 @@ test("QUERY_FILES_ROOT is configurable and defaults to the external-volume path"
     else process.env.QUERY_FILES_ROOT = previous;
   }
 });
+
+test("web image seeds safe saved queries for every analysis macro and autocomplete", async () => {
+  const seedRoot = path.resolve("src/db/saved-queries");
+  const files = (await readdir(seedRoot)).sort();
+
+  assert.deepEqual(files, [
+    "autocomplete-tour.sql",
+    "entity-property-history.sql",
+    "entity-state-at-game-time.sql",
+    "match-players.sql",
+    "match-summary.sql",
+  ]);
+
+  const queries = await Promise.all(files.map(async (file) => ({
+    file,
+    sql: await readFile(path.join(seedRoot, file), "utf8"),
+  })));
+  for (const { file, sql } of queries) {
+    assert.doesNotThrow(() => saveSavedQueryInputSchema.parse({
+      name: file.replace(/\.sql$/, ""),
+      sql,
+    }));
+  }
+
+  for (const macro of [
+    "entity_property_history",
+    "entity_state_at_game_time",
+    "match_players",
+    "match_summary",
+  ]) {
+    assert.equal(
+      queries.some(({ sql }) => sql.includes(`analysis.${macro}(`)),
+      true,
+      `missing seeded query for analysis.${macro}`,
+    );
+  }
+
+  const autocomplete = queries.find(({ file }) => file === "autocomplete-tour.sql")?.sql;
+  assert.match(autocomplete ?? "", /\be\.[a-z_]+/);
+  assert.match(autocomplete ?? "", /FROM catalog\.extractions AS e/);
+});
