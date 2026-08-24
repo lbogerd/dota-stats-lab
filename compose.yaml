@@ -18,6 +18,23 @@ services:
       web:
         condition: service_healthy
 
+  staging-init:
+    build:
+      context: .
+      target: app
+    image: dota-stats-lab-app:local
+    command: ["init-staging"]
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: volume
+        source: staging
+        target: /work/staging
+
   web:
     build:
       context: .
@@ -35,6 +52,9 @@ services:
     pids_limit: 128
     ports:
       - "127.0.0.1:3400:3000"
+    depends_on:
+      staging-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
@@ -75,6 +95,9 @@ services:
       target: parser
     image: dota-stats-lab-parser:local
     command: []
+    depends_on:
+      staging-init:
+        condition: service_completed_successfully
     init: true
     network_mode: none
     read_only: true
@@ -94,7 +117,9 @@ services:
         read_only: true
       - type: volume
         source: staging
-        target: /work/staging
+        target: /work/staging/inbox
+        volume:
+          subpath: inbox
 
   parser-worker:
     build:
@@ -102,6 +127,9 @@ services:
       target: parser-worker
     image: dota-stats-lab-parser-worker:local
     command: ["parser-worker"]
+    depends_on:
+      staging-init:
+        condition: service_completed_successfully
     init: true
     restart: unless-stopped
     network_mode: none
@@ -122,7 +150,14 @@ services:
         read_only: true
       - type: volume
         source: staging
-        target: /work/staging
+        target: /work/staging/inbox
+        volume:
+          subpath: inbox
+      - type: volume
+        source: staging
+        target: /work/staging/jobs
+        volume:
+          subpath: jobs
 
   loader:
     build:
@@ -130,6 +165,9 @@ services:
       target: app
     image: dota-stats-lab-app:local
     command: ["load"]
+    depends_on:
+      staging-init:
+        condition: service_completed_successfully
     init: true
     network_mode: none
     read_only: true

@@ -1,9 +1,10 @@
-import { readdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { paths } from "../config.js";
 import { migrate, openWarehouse } from "../db/database.js";
 import { withWarehouseLock } from "../db/lock.js";
+import type { ClaimedExtraction } from "../jobs/extraction-claim.js";
 import { jsonStringify } from "../lib/json.js";
 import { stagedFiles, validateManifest, type Manifest } from "./manifest.js";
 import {
@@ -14,6 +15,7 @@ import {
 } from "./storage-policy.js";
 
 export type LoadResult = { extractionId: string; status: "loaded" | "already_loaded" };
+export type ValidatedExtraction = ClaimedExtraction & { manifest: Manifest };
 
 export async function migrateOnly(): Promise<void> {
   await withWarehouseLock(paths.warehousePath, async () => {
@@ -22,9 +24,21 @@ export async function migrateOnly(): Promise<void> {
   });
 }
 
-export async function loadExtraction(matchId: bigint): Promise<LoadResult> {
-  const extractionDir = await findExtractionDir(matchId);
-  const manifest = await validateManifest(extractionDir, matchId);
+export async function validateClaimedExtraction(claimed: ClaimedExtraction): Promise<ValidatedExtraction> {
+  const manifest = await validateManifest(claimed.directory, claimed.matchId);
+  if (manifest.extractionId !== claimed.extractionId) {
+    throw new Error("Claimed extraction directory does not match manifest extraction ID");
+  }
+  return { ...claimed, manifest };
+}
+
+export async function loadClaimedExtraction(claimed: ClaimedExtraction): Promise<LoadResult> {
+  return loadValidatedExtraction(await validateClaimedExtraction(claimed));
+}
+
+export async function loadValidatedExtraction(validated: ValidatedExtraction): Promise<LoadResult> {
+  const extractionDir = validated.directory;
+  const manifest = validated.manifest;
   const acquisition = validateAcquisition(manifest);
 
   return withWarehouseLock(paths.warehousePath, async () => {
@@ -73,14 +87,6 @@ export async function loadExtraction(matchId: bigint): Promise<LoadResult> {
       return { extractionId: manifest.extractionId, status: "loaded" };
     } finally { database.close(); }
   });
-}
-
-async function findExtractionDir(matchId: bigint): Promise<string> {
-  const matchDir = path.join(paths.stagingRoot, matchId.toString());
-  const entries = await readdir(matchDir, { withFileTypes: true });
-  const directories = entries.filter((entry) => entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name));
-  if (directories.length !== 1) throw new Error(`Expected exactly one staged extraction for match ${matchId}, found ${directories.length}`);
-  return path.join(matchDir, directories[0]!.name);
 }
 
 function validateAcquisition(manifest: Manifest): Record<string, unknown> {

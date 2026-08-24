@@ -40,7 +40,11 @@ Saved queries live in the external `dota-stats-queries` volume and survive web-c
 
 The permanent `web` service owns network replay acquisition, job coordination, DuckDB loading and read-only browser queries. The separate `parser-worker` has no network, warehouse, or saved-query access. The `fetch`, `parser`, and `loader` services remain available as one-shot containers for the CLI workflow.
 
-Job handoff files and failed extraction output live in the project-scoped `dota-stats-staging` volume. Before deleting retained failure data, confirm that no job is queued, fetching, parsing, or loading. Cached replays and committed warehouse data do not depend on failed staging directories.
+Job handoff files and failed extraction output live in the project-scoped `dota-stats-staging` volume. The volume has separate `inbox`, `claimed`, and `jobs` directories. The parser can write only to the inbox. The coordinator uses an atomic rename to give one extraction to one job. The loader then validates each NDJSON file in one read before it imports the file. Failed claimed extractions stay available for diagnosis.
+
+This staging layout is different from the layout in earlier releases. Before you deploy this change, let all jobs in the old deployment finish. Then rebuild and recreate `web` and `parser-worker` together. Old failure directories at the staging-volume root stay in place, but the new services do not use them.
+
+Before deleting retained failure data, confirm that no job is queued, fetching, parsing, or loading. Cached replays and committed warehouse data do not depend on failed staging directories.
 
 ## SQL queries
 

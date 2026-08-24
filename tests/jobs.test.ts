@@ -39,12 +39,23 @@ test("coordinator and parser worker complete the fetch, parse, validate, and loa
   const jobsRoot = path.join(root, "success-jobs");
   const transitions: string[] = [];
   const coordinator = coordinatorFor(jobsRoot, {
-    validateOutput: async (_matchId: bigint, expected?: string) => {
+    claim: async (claimId: string, matchId: bigint, expected: string) => {
+      assert.match(claimId, /^[0-9a-f-]{36}$/);
+      assert.equal(matchId, 8953222159n);
       assert.equal(expected, extractionId);
-      transitions.push("validated");
+      transitions.push("claimed");
+      return claimed(claimId, matchId, expected);
+    },
+    inspect: async (value: ReturnType<typeof claimed>) => {
+      assert.equal(value.extractionId, extractionId);
+      transitions.push("inspected");
       return { extractionId } as never;
     },
-    load: async () => { transitions.push("loaded"); return { extractionId, status: "loaded" as const }; },
+    load: async (value: ReturnType<typeof claimed>) => {
+      assert.equal(value.extractionId, extractionId);
+      transitions.push("loaded");
+      return { extractionId, status: "loaded" as const };
+    },
   });
   const queued = await coordinator.enqueue(8953222159n);
   await coordinator.tick();
@@ -61,7 +72,7 @@ test("coordinator and parser worker complete the fetch, parse, validate, and loa
   await coordinator.tick();
   assert.equal((await coordinator.get(queued.jobId)).state, "loading");
   await coordinator.tick();
-  assert.deepEqual(transitions, ["parsed", "validated", "validated", "loaded"]);
+  assert.deepEqual(transitions, ["parsed", "claimed", "inspected", "claimed", "loaded"]);
   assert.match(JSON.stringify(await coordinator.get(queued.jobId)), /"state":"succeeded"/);
 });
 
@@ -90,7 +101,7 @@ test("coordinator records unavailable replay, parser, and loader failures", asyn
 
   const invalidOutputRoot = path.join(root, "invalid-output-jobs");
   const invalidOutputCoordinator = coordinatorFor(invalidOutputRoot, {
-    validateOutput: async () => { throw new Error("checksum mismatch"); },
+    inspect: async () => { throw new Error("invalid manifest"); },
   });
   const invalidOutputJob = await invalidOutputCoordinator.enqueue(22n);
   await invalidOutputCoordinator.tick();
@@ -102,11 +113,10 @@ test("coordinator records unavailable replay, parser, and loader failures", asyn
   await invalidOutputCoordinator.tick();
   const invalidOutputStatus = await invalidOutputCoordinator.get(invalidOutputJob.jobId);
   assert.deepEqual(pickFailure(invalidOutputStatus), ["failed", "parsing"]);
-  assert.match(invalidOutputStatus.error?.message ?? "", /Invalid parser output: checksum mismatch/);
+  assert.match(invalidOutputStatus.error?.message ?? "", /Cannot claim parser output: invalid manifest/);
 
   const loaderRoot = path.join(root, "loader-failure-jobs");
   const loaderCoordinator = coordinatorFor(loaderRoot, {
-    validateOutput: async () => ({ extractionId } as never),
     load: async () => { throw new Error("DuckDB refused import"); },
   });
   const loaderJob = await loaderCoordinator.enqueue(3n);
@@ -135,7 +145,7 @@ test("Java parser runner invokes the existing jar contract and validates its JSO
     }), { extractionId });
     const argumentsText = await import("node:fs/promises").then(({ readFile }) => readFile(argumentsFile, "utf8"));
     assert.deepEqual(argumentsText.trim().split("\n"), [
-      "-jar", "/test/parser.jar", "99", "--staging-root", process.env.STAGING_ROOT!, "--replay-sha256", sha,
+      "-jar", "/test/parser.jar", "99", "--staging-root", path.join(process.env.STAGING_ROOT!, "inbox"), "--replay-sha256", sha,
     ]);
   } finally {
     delete process.env.JAVA_COMMAND;
@@ -191,10 +201,20 @@ function coordinatorFor(jobsRoot: string, overrides: Record<string, unknown> = {
       };
     },
     alreadyLoaded: async () => false,
-    validateOutput: async () => ({ extractionId } as never),
-    load: async () => ({ extractionId, status: "loaded" as const }),
+    claim: async (claimId: string, matchId: bigint, expected: string) => claimed(claimId, matchId, expected),
+    inspect: async (value: ReturnType<typeof claimed>) => ({ extractionId: value.extractionId } as never),
+    load: async (value: ReturnType<typeof claimed>) => ({ extractionId: value.extractionId, status: "loaded" as const }),
     ...overrides,
   } as never });
+}
+
+function claimed(claimId: string, matchId: bigint, id: string): {
+  claimId: string;
+  matchId: bigint;
+  extractionId: string;
+  directory: string;
+} {
+  return { claimId, matchId, extractionId: id, directory: path.join(root, "claimed", claimId, id) };
 }
 
 function pickFailure(status: { state: string; error?: { stage: string } }): [string, string | undefined] {

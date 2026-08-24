@@ -46,6 +46,9 @@ FROM node:22.18.0-bookworm-slim AS app
 ENV NODE_ENV=production \
     REPLAY_ROOT=/data/replays \
     STAGING_ROOT=/work/staging \
+    STAGING_INBOX_ROOT=/work/staging/inbox \
+    STAGING_CLAIMED_ROOT=/work/staging/claimed \
+    JOBS_ROOT=/work/staging/jobs \
     MIGRATION_ROOT=/app/migrations \
     QUERY_ROOT=/app/queries \
     WAREHOUSE_PATH=/data/warehouse/dota.duckdb \
@@ -54,7 +57,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 RUN groupadd --gid 10001 dota \
     && useradd --uid 10001 --gid dota --no-create-home --shell /usr/sbin/nologin dota \
-    && mkdir -p /data/replays /data/warehouse /work/staging \
+    && mkdir -p /data/replays /data/warehouse /work/staging/inbox /work/staging/claimed /work/staging/jobs \
     && chown -R dota:dota /data/replays /data/warehouse /work/staging
 
 COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
@@ -101,7 +104,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 RUN groupadd --gid 10001 dota \
     && useradd --uid 10001 --gid dota --no-create-home --shell /usr/sbin/nologin dota \
-    && mkdir -p /data/replays /data/warehouse /data/queries /work/staging \
+    && mkdir -p /data/replays /data/warehouse /data/queries /work/staging/inbox /work/staging/claimed /work/staging/jobs \
     && chown -R dota:dota /data/replays /data/warehouse /data/queries /work/staging
 
 COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
@@ -118,7 +121,7 @@ CMD ["./node_modules/.bin/srvx", "--prod", "--host=0.0.0.0", "--port=3000", "--s
 FROM java-runtime AS parser
 
 ENV REPLAY_ROOT=/data/replays \
-    STAGING_ROOT=/work/staging \
+    STAGING_ROOT=/work/staging/inbox \
     PARSER_MAX_INPUT_BYTES=2147483648 \
     PARSER_MAX_OUTPUT_BYTES=12884901888 \
     PARSER_TIMEOUT_SECONDS=1800 \
@@ -128,7 +131,7 @@ ENV REPLAY_ROOT=/data/replays \
 WORKDIR /app
 RUN groupadd --gid 10001 dota \
     && useradd --uid 10001 --gid dota --no-create-home --shell /usr/sbin/nologin dota \
-    && mkdir -p /data/replays /work/staging \
+    && mkdir -p /data/replays /work/staging/inbox \
     && chown -R dota:dota /data/replays /work/staging
 
 COPY --from=parser-build --chown=dota:dota /build/parser/build/libs/dota-replay-exporter.jar /app/parser.jar

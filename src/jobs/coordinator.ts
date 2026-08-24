@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { paths, replayDir } from "../config.js";
 import { fetchReplay, type Acquisition } from "../fetch/fetch-replay.js";
-import { loadExtraction, type LoadResult } from "../load/load-extraction.js";
+import { loadClaimedExtraction, type LoadResult } from "../load/load-extraction.js";
+import type { Manifest } from "../load/manifest.js";
 import { extractionAlreadyLoaded } from "../load/preflight.js";
 import { parseMatchId } from "../lib/match-id.js";
 import {
@@ -19,20 +20,29 @@ import {
   writeParseRequest,
   type JobStatus,
 } from "./job-files.js";
-import { validateParserOutput } from "./parser-output.js";
+import { claimExtraction, type ClaimedExtraction } from "./extraction-claim.js";
+import { inspectClaimedExtraction } from "./parser-output.js";
 
 export type CoordinatorDependencies = {
   fetch: (matchId: bigint) => Promise<Acquisition>;
   alreadyLoaded: (matchId: bigint, replaySha256: string | undefined) => Promise<boolean>;
-  validateOutput: typeof validateParserOutput;
-  load: (matchId: bigint) => Promise<LoadResult>;
+  claim: (claimId: string, matchId: bigint, extractionId: string) => Promise<ClaimedExtraction>;
+  inspect: (claimed: ClaimedExtraction) => Promise<Manifest>;
+  load: (claimed: ClaimedExtraction) => Promise<LoadResult>;
 };
 
 const defaultDependencies: CoordinatorDependencies = {
   fetch: fetchReplay,
   alreadyLoaded: extractionAlreadyLoaded,
-  validateOutput: validateParserOutput,
-  load: loadExtraction,
+  claim: (claimId, matchId, extractionId) => claimExtraction({
+    claimId,
+    matchId,
+    extractionId,
+    inboxRoot: paths.stagingInboxRoot,
+    claimedRoot: paths.stagingClaimedRoot,
+  }),
+  inspect: inspectClaimedExtraction,
+  load: loadClaimedExtraction,
 };
 
 export class IngestionCoordinator {
@@ -170,23 +180,26 @@ export class IngestionCoordinator {
         return;
       }
       try {
-        const manifest = await this.#dependencies.validateOutput(matchId, result.extractionId);
+        if (result.extractionId === undefined) throw new Error("Successful parser result does not have an extraction ID");
+        const claimed = await this.#dependencies.claim(status.jobId, matchId, result.extractionId);
+        const manifest = await this.#dependencies.inspect(claimed);
         await updateJobStatus(status, "loading", { extractionId: manifest.extractionId }, this.#jobsRoot);
-      } catch (error) { await this.#fail(status, "parsing", `Invalid parser output: ${errorMessage(error)}`); }
+      } catch (error) { await this.#fail(status, "parsing", `Cannot claim parser output: ${errorMessage(error)}`); }
       return;
     }
     if (status.state === "loading") {
       try {
+        if (status.extractionId === undefined) throw new Error("Loading job does not have an extraction ID");
         const acquisition = await readAcquisition(matchId);
         if (await this.#dependencies.alreadyLoaded(matchId, acquisition.replaySha256)) {
           await updateJobStatus(status, "succeeded", {
-            ...(status.extractionId === undefined ? {} : { extractionId: status.extractionId }),
+            extractionId: status.extractionId,
             result: "already_loaded",
           }, this.#jobsRoot);
           return;
         }
-        await this.#dependencies.validateOutput(matchId, status.extractionId);
-        const loaded = await this.#dependencies.load(matchId);
+        const claimed = await this.#dependencies.claim(status.jobId, matchId, status.extractionId);
+        const loaded = await this.#dependencies.load(claimed);
         await updateJobStatus(status, "succeeded", { extractionId: loaded.extractionId, result: loaded.status }, this.#jobsRoot);
       } catch (error) { await this.#fail(status, "loading", errorMessage(error)); }
     }

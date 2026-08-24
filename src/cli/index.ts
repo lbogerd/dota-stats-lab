@@ -11,8 +11,22 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "load") {
-    const { loadExtraction } = await import("../load/load-extraction.js");
-    const result = await loadExtraction(parseMatchId(process.env.MATCH_ID));
+    const matchId = parseMatchId(process.env.MATCH_ID);
+    const [{ paths }, { claimExtraction }, { findPublishedExtractionId }, { loadClaimedExtraction }] = await Promise.all([
+      import("../config.js"),
+      import("../jobs/extraction-claim.js"),
+      import("../jobs/parser-output.js"),
+      import("../load/load-extraction.js"),
+    ]);
+    const extractionId = await findPublishedExtractionId(matchId);
+    const claimed = await claimExtraction({
+      matchId,
+      claimId: `cli-${matchId}`,
+      extractionId,
+      inboxRoot: paths.stagingInboxRoot,
+      claimedRoot: paths.stagingClaimedRoot,
+    });
+    const result = await loadClaimedExtraction(claimed);
     process.stdout.write(`${jsonStringify(result)}\n`);
     return;
   }
@@ -35,12 +49,18 @@ async function main(): Promise<void> {
     await migrateOnly();
     return;
   }
+  if (command === "init-staging") {
+    const { initializeStagingLayout } = await import("../staging/initialize.js");
+    await initializeStagingLayout();
+    process.stdout.write(`${jsonStringify({ status: "initialized" })}\n`);
+    return;
+  }
   if (command === "parser-worker") {
     const { runParserWorker } = await import("../jobs/parser-worker-main.js");
     await runParserWorker();
     return;
   }
-  throw new Error("Usage: cli/index.js fetch|check|load|sql|migrate|parser-worker");
+  throw new Error("Usage: cli/index.js fetch|check|load|sql|migrate|init-staging|parser-worker");
 }
 
 main().catch((error: unknown) => {
