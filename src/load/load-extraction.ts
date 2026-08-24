@@ -199,7 +199,18 @@ async function importStagedFiles(connection: DuckDBConnection, dir: string, mani
         attackerHeroLevel, targetHeroLevel, damageType, damageCategory,
         runeType, stackCount, observerWardsPlaced, assistPlayers::INTEGER[],
         attackerHero, targetHero, targetBuilding, attackerIllusion,
-        targetIllusion, healSave, longRangeKill
+        targetIllusion, healSave, longRangeKill,
+        targetSourceName, valueName, modifierElapsedDuration, abilityLevel,
+        neutralCampType, buildingType, modifierPurgeAbility, modifierPurgeNpc,
+        totalUnitDeathCount, modifierAbility, killEaterEvent, unitStatusLabel,
+        neutralCampTeam, regeneratedHealth, trackedStatId, modifierPurgedDuration,
+        visibleRadiant, visibleDire, abilityToggleOn, abilityToggleOff,
+        hiddenModifier, ultimateAbility, targetSelf, invisibilityModifier,
+        silenceModifier, healFromLifesteal, modifierPurged, spellEvaded,
+        motionControllerModifier, rootModifier, auraModifier, armorDebuffModifier,
+        noPhysicalDamageModifier, modifierHidden, inflictorIsStolenAbility,
+        spellGeneratedAttack, atNightTime, attackerHasScepter, willReincarnate,
+        usesCharges, healFromRegen
       FROM read_ndjson_auto('__FILE__')`],
     ["entityInstances", `INSERT INTO raw.entity_instances
       SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, entityIndex::UINTEGER, serial::UINTEGER,

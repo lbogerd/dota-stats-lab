@@ -71,9 +71,9 @@ The profile applies Clarity runner filters before generic message/entity handlin
 |---|---|---|
 | `CMsgDOTAMatch` | complete JSON plus typed `analysis.matches`, `analysis.players`, and `analysis.player_items` | authoritative final overview and scoreboard |
 | `CDOTAMatchMetadataFile` | complete JSON plus typed `analysis.team_time_series` | graphs, inventory/ability snapshots, wards, support statistics, and other future analyses |
-| `CMsgDOTACombatLogEntry` | typed `raw.combat_events` rows | the match event timeline: combat, economy, levels, runes, wards, modifiers, and locations |
+| `CMsgDOTACombatLogEntry` | typed `raw.combat_events` rows | every semantic field exposed by Clarity's combat-log API: combat, economy, levels, runes, wards, modifiers, visibility, abilities, objectives, and locations |
 
-The two complete documents stay in `raw.records`; BLOB fields are kept in `raw.record_blobs`. Common filters, joins, and aggregates never need to parse the large documents because their current fields are normalized. Combat events use typed scalar columns and an extraction/time/type index rather than a full text copy.
+The two complete documents stay in `raw.records`; BLOB fields are kept in `raw.record_blobs`. Common filters, joins, and aggregates never need to parse the large documents because their current fields are normalized. Combat events use typed scalar columns and an extraction/time/type index rather than a full text copy. Internal Clarity string-table indices are omitted because the resolved names are retained and the indices have no independent Dota meaning.
 
 Key schemas:
 
