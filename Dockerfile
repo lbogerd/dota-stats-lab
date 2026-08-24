@@ -112,7 +112,6 @@ COPY --from=node-production --chown=dota:dota /build/node_modules ./node_modules
 COPY --from=node-production --chown=dota:dota /build/dist ./dist
 COPY --from=node-production --chown=dota:dota /build/src/db/migrations ./migrations
 COPY --from=node-production --chown=dota:dota /build/src/db/queries ./queries
-COPY --from=node-production --chown=dota:dota /build/src/db/saved-queries /data/queries
 
 USER 10001:10001
 EXPOSE 3000
