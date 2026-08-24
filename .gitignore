@@ -3,6 +3,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+benchmark-results/
 *.duckdb
 *.duckdb.*
 *.dem
