@@ -1,0 +1,3 @@
+[submodule "vendor/clarity"]
+	path = vendor/clarity
+	url = https://github.com/lbogerd/clarity.git
