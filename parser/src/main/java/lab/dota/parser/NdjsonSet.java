@@ -16,6 +16,7 @@ import java.util.Map;
 final class NdjsonSet implements Closeable {
     static final Map<String, String> FILES = Map.of(
             "records", "records.ndjson",
+            "combatEvents", "combat_events.ndjson",
             "blobs", "blobs.ndjson",
             "entityInstances", "entity_instances.ndjson",
             "entityEvents", "entity_events.ndjson",

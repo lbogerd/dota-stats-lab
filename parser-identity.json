@@ -2,5 +2,5 @@
   "parserName": "clarity",
   "clarityUpstreamRelease": "4.0.1",
   "clarityForkRevision": "11df6814e80b386a299aab3878ab34709d7e35f3",
-  "exportFormatVersion": "0.1.3"
+  "exportFormatVersion": "1.0.0"
 }

@@ -11,7 +11,12 @@ export async function openWarehouse(readOnly = false): Promise<{ connection: Duc
     readOnly ? { ...commonOptions, access_mode: "READ_ONLY" } : commonOptions,
   );
   const connection = await instance.connect();
-  return { connection, close: () => connection.closeSync() };
+  return {
+    connection,
+    close: () => {
+      try { connection.closeSync(); } finally { instance.closeSync(); }
+    },
+  };
 }
 
 export async function migrate(connection: DuckDBConnection): Promise<void> {

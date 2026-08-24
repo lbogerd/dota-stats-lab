@@ -5,6 +5,7 @@ import { withReadOnlyWarehouse } from "./warehouse.js";
 
 export interface ExtractionCounts {
   records: string;
+  combatEvents: string;
   blobs: string;
   entityInstances: string;
   entityEvents: string;
@@ -179,6 +180,7 @@ function mapMatchSummary(row: Record<string, JsonValue>): CatalogMatchSummary {
 function countsFromRow(row: Record<string, JsonValue>): ExtractionCounts {
   return {
     records: stringValue(row.records),
+    combatEvents: stringValue(row.combat_events),
     blobs: stringValue(row.blobs),
     entityInstances: stringValue(row.entity_instances),
     entityEvents: stringValue(row.entity_events),
@@ -228,6 +230,7 @@ function boundedInteger(name: string, value: number, minimum: number, maximum: n
 
 const COUNT_COLUMNS = `
   coalesce(json_extract_string(e.record_counts, '$.records'), '0') AS records,
+  coalesce(json_extract_string(e.record_counts, '$.combatEvents'), '0') AS combat_events,
   coalesce(json_extract_string(e.record_counts, '$.blobs'), '0') AS blobs,
   coalesce(json_extract_string(e.record_counts, '$.entityInstances'), '0') AS entity_instances,
   coalesce(json_extract_string(e.record_counts, '$.entityEvents'), '0') AS entity_events,

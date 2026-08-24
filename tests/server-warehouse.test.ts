@@ -118,6 +118,7 @@ test("browser SQL rejects ATTACH, COPY, file reads, and extension loading", asyn
 });
 
 test("read-only configuration is locked and warehouse work is serialized", async () => {
+  let queued: ReturnType<typeof executeReadOnlySql> | undefined;
   await withReadOnlyWarehouse(async (connection) => {
     const settings = await connection.runAndReadAll(`
       SELECT name, value FROM duckdb_settings()
@@ -128,9 +129,10 @@ test("read-only configuration is locked and warehouse work is serialized", async
       lock_configuration: "true",
       threads: "1",
     });
-    await assert.rejects(executeReadOnlySql("SELECT 1"), /Warehouse is in use/);
+    queued = executeReadOnlySql("SELECT 1");
     await assert.rejects(connection.run("SET threads = 2"), /configuration has been locked/i);
   });
+  assert.deepEqual((await queued!).rows, [{ "1": 1 }]);
 });
 
 test("catalog lists latest match state with string-safe counts", async () => {
@@ -141,7 +143,7 @@ test("catalog lists latest match state with string-safe counts", async () => {
   assert.equal(matches[0]!.replayBytes, "9007199254740993");
   assert.equal(matches[0]!.extractionCount, 2);
   assert.deepEqual(matches[0]!.counts, {
-    records: "0", blobs: "0", entityInstances: "0", entityEvents: "0",
+    records: "0", combatEvents: "0", blobs: "0", entityInstances: "0", entityEvents: "0",
     propertyUpdates: "0", checkpoints: "0", total: "0",
   });
   assert.equal(matches[1]!.errorCode, "unavailable");
