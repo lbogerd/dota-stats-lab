@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { manifestParserIdentity, parserIdentity } from "../src/load/parser-identity.js";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "dota-loader-"));
 process.env.STAGING_ROOT = path.join(root, "staging");
@@ -42,6 +43,34 @@ test("loader imports atomically, supports analysis macros, and is idempotent", a
 
   assert.equal((await loadClaimedExtraction(await stage(extractionId, goodRows))).status, "already_loaded");
   assert.equal(await extractionAlreadyLoaded(matchId, replaySha256), true);
+});
+
+test("preflight and storage distinguish parser identities for the same replay", async () => {
+  const identityMatchId = 45n;
+  const oldExtractionId = "f".repeat(64);
+  const currentExtractionId = "0".repeat(64);
+  const rowsFor = (id: string): Record<string, string> => Object.fromEntries(
+    Object.entries(goodRows).map(([name, body]) => [name, body.replaceAll(extractionId, id)]),
+  );
+
+  await loadClaimedExtraction(await stage(oldExtractionId, rowsFor(oldExtractionId), identityMatchId, {
+    parser: { name: parserIdentity.name, version: "different-fork-revision" },
+    exporterVersion: parserIdentity.exporterVersion,
+  }));
+  assert.equal(await extractionAlreadyLoaded(identityMatchId, replaySha256), false);
+
+  await loadClaimedExtraction(await stage(currentExtractionId, rowsFor(currentExtractionId), identityMatchId));
+  assert.equal(await extractionAlreadyLoaded(identityMatchId, replaySha256), true);
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(
+      "SELECT count(*)::INTEGER AS n FROM catalog.extractions WHERE match_id = $matchId AND replay_sha256 = $sha AND status = 'succeeded'",
+      { matchId: identityMatchId, sha: replaySha256 },
+    );
+    assert.deepEqual(result.getRowObjectsJson(), [{ n: 2 }]);
+  } finally { connection.closeSync(); }
 });
 
 test("loader stores only retained rows and catalogs stored counts", async () => {
@@ -168,7 +197,15 @@ test("duplicate property-update sequences roll back the extraction", async () =>
   } finally { connection.closeSync(); }
 });
 
-async function stage(id: string, rows: Record<string, string>, stagedMatchId = matchId): Promise<{
+async function stage(
+  id: string,
+  rows: Record<string, string>,
+  stagedMatchId = matchId,
+  identity: {
+    parser?: { name: string; version: string; upstreamRelease?: string; forkRevision?: string };
+    exporterVersion?: string;
+  } = {},
+): Promise<{
   matchId: bigint;
   claimId: string;
   extractionId: string;
@@ -195,7 +232,8 @@ async function stage(id: string, rows: Record<string, string>, stagedMatchId = m
   const now = new Date().toISOString();
   await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
     schemaVersion: 1, extractionId: id, matchId: stagedMatchId.toString(), replaySha256,
-    parser: { name: "clarity", version: "4.0.1" }, exporterVersion: "0.1.3",
+    parser: identity.parser ?? manifestParserIdentity,
+    exporterVersion: identity.exporterVersion ?? parserIdentity.exporterVersion,
     config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 12_884_901_888, maxRecords: 50_000_000, timeoutSeconds: 1_800 },
     startedAt: now, completedAt: now, elapsedMs: 1, files, counts: {},
   }));
