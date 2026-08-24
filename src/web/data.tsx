@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import type { JobStatus as ServerJobStatus } from "../jobs/job-files.js";
+import { isValidMatchId } from "../lib/match-id.js";
 import type { CatalogMatchDetail, CatalogMatchSummary } from "../server/catalog.js";
 import type { SqlCatalog } from "../server/sql-catalog.js";
 import type { ReadOnlySqlResult } from "../server/warehouse.js";
@@ -37,7 +38,7 @@ export type { SavedQuery };
 export type SqlResult = ReadOnlySqlResult;
 export type { SqlCatalog };
 
-export const matchIdSchema = z.string().regex(/^[1-9][0-9]{5,19}$/, "Enter a valid numeric match ID.");
+export const matchIdSchema = z.string().refine(isValidMatchId, "Enter a positive match ID in the DuckDB UBIGINT range.");
 export const queryNameSchema = z.string().min(1).max(48).regex(/^[a-z0-9_-]+$/, "Use lowercase letters, numbers, hyphens, or underscores.");
 
 export const queryKeys = {

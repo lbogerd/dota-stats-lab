@@ -23,7 +23,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; background: #f3f1e9; }
 button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 3px solid rgba(49, 95, 74, 0.25);
+  outline: 3px solid #4f765f;
   outline-offset: 2px;
 }
 ::selection { color: #142019; background: #d9f77f; }
@@ -43,6 +43,33 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   text-transform: uppercase;
 }
 .scrollbar-subtle { scrollbar-color: #c5cbc3 transparent; scrollbar-width: thin; }
+.overview-primary-link {
+  display: inline-flex;
+  min-height: 2.75rem;
+  width: fit-content;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: #315f4a;
+  padding: 0 1rem;
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 150ms ease;
+}
+.overview-primary-link:hover { background: #234636; }
+.roster-table th:not(:first-child),
+.roster-table td { padding: 0.75rem 0.85rem; }
+.roster-table tbody td,
+.roster-table tfoot td {
+  color: #35443b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
 @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .pulse-soft { animation: pulse-soft 1.9s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {

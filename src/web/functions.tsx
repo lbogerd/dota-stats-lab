@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { isValidMatchId } from "../lib/match-id.js";
 import { getMatchDetail, listMatches } from "../server/catalog.js";
 import { ensureIngestionCoordinator } from "../server/ingestion-runtime.js";
 import {
@@ -9,6 +10,7 @@ import {
   savedQueryNameInputSchema,
 } from "../server/saved-queries.js";
 import { getSqlCatalog } from "../server/sql-catalog.js";
+import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
 
 export const listSavedQueriesFn = createServerFn({ method: "GET" })
@@ -35,7 +37,7 @@ export const downloadSavedQueryFn = createServerFn({ method: "GET" })
   .handler(({ data }) => createSavedQueryStore().download(data.name));
 
 const matchIdInputSchema = z.object({
-  matchId: z.string().regex(/^[1-9][0-9]{0,19}$/, "Enter a valid numeric match ID."),
+  matchId: z.string().refine(isValidMatchId, "Enter a positive match ID in the DuckDB UBIGINT range."),
 });
 
 const browserSqlInputSchema = z.object({
@@ -48,6 +50,13 @@ export const listMatchesFn = createServerFn({ method: "GET" })
 export const getMatchDetailFn = createServerFn({ method: "GET" })
   .validator(matchIdInputSchema)
   .handler(({ data }) => getMatchDetail(data.matchId));
+
+export const listMatchOverviewsFn = createServerFn({ method: "GET" })
+  .handler(() => listMatchOverviews());
+
+export const getMatchOverviewFn = createServerFn({ method: "GET" })
+  .validator(matchIdInputSchema)
+  .handler(({ data }) => getMatchOverview(data.matchId));
 
 export const runSqlFn = createServerFn({ method: "POST" })
   .validator(browserSqlInputSchema)
