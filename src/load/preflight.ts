@@ -2,8 +2,8 @@ import { stat } from "node:fs/promises";
 import { paths } from "../config.js";
 import { openWarehouse } from "../db/database.js";
 import { withWarehouseLock } from "../db/lock.js";
+import { parserIdentity } from "./parser-identity.js";
 
-const parser = { name: "clarity", version: "4.0.1", exporterVersion: "0.1.3" } as const;
 const config = {
   maxInputBytes: 2_147_483_648,
   maxOutputBytes: 12_884_901_888,
@@ -35,8 +35,8 @@ export async function extractionAlreadyLoaded(matchId: bigint, replaySha256: str
            AND (extraction_config->>'timeoutSeconds') = $timeout
            AND (extraction_config->>'checkpointIntervalSeconds') = $interval`,
         {
-          matchId, sha: replaySha256, parserName: parser.name, parserVersion: parser.version,
-          exporterVersion: parser.exporterVersion, maxInput: String(config.maxInputBytes),
+          matchId, sha: replaySha256, parserName: parserIdentity.name, parserVersion: parserIdentity.version,
+          exporterVersion: parserIdentity.exporterVersion, maxInput: String(config.maxInputBytes),
           maxOutput: String(config.maxOutputBytes), maxRecords: String(config.maxRecords),
           timeout: String(config.timeoutSeconds), interval: String(config.checkpointIntervalSeconds),
         },

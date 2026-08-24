@@ -9,6 +9,7 @@ RUN npm install --global "pnpm@${PNPM_VERSION}"
 COPY package.json pnpm-lock.yaml tsconfig.json tsconfig.web.json vite.config.ts vitest.config.ts ./
 RUN pnpm install --frozen-lockfile
 
+COPY parser-identity.json ./
 COPY src ./src
 COPY tests ./tests
 RUN pnpm build
@@ -31,10 +32,13 @@ FROM node-build AS node-production
 RUN pnpm prune --prod
 
 
-FROM gradle:8.14.3-jdk21 AS parser-build
+FROM gradle:8.14.3-jdk17 AS parser-build
 
+WORKDIR /build
+COPY parser-identity.json ./
+COPY parser ./parser
+COPY vendor/clarity ./vendor/clarity
 WORKDIR /build/parser
-COPY parser/ ./
 RUN gradle --no-daemon clean test shadowJar
 
 

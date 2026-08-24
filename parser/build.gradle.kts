@@ -1,20 +1,28 @@
+import groovy.json.JsonSlurper
+
 plugins {
     application
     java
     id("com.gradleup.shadow") version "8.3.6"
 }
 
+val parserIdentityFile = rootProject.file("../parser-identity.json")
+val parserIdentity = JsonSlurper().parse(parserIdentityFile) as Map<*, *>
+val clarityUpstreamRelease = parserIdentity.requiredString("clarityUpstreamRelease")
+val clarityForkRevision = parserIdentity.requiredString("clarityForkRevision")
+val exportFormatVersion = parserIdentity.requiredString("exportFormatVersion")
+
 group = "lab.dota"
-version = "0.1.3"
+version = exportFormatVersion
 
 repositories { mavenCentral() }
 
 java {
-    toolchain { languageVersion.set(JavaLanguageVersion.of(21)) }
+    toolchain { languageVersion.set(JavaLanguageVersion.of(17)) }
 }
 
 dependencies {
-    implementation("com.skadistats:clarity:4.0.1")
+    implementation("com.skadistats:clarity:$clarityUpstreamRelease")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.18.3")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("com.github.luben:zstd-jni:1.5.7-3")
@@ -26,7 +34,46 @@ dependencies {
 
 application { mainClass.set("lab.dota.parser.Main") }
 
-tasks.test { useJUnitPlatform() }
+tasks.processResources {
+    from(parserIdentityFile)
+}
+
+val verifyClarityRevision by tasks.registering {
+    group = "verification"
+    description = "Checks that parser-identity.json names the checked-out Clarity fork revision."
+    inputs.file(parserIdentityFile)
+    inputs.property("clarityForkRevision", clarityForkRevision)
+
+    doLast {
+        val clarityDirectory = rootProject.file("../vendor/clarity")
+        if (!clarityDirectory.resolve(".git").exists()) {
+            logger.lifecycle("Clarity Git metadata is unavailable; using revision from parser-identity.json")
+            return@doLast
+        }
+
+        val actualRevision = providers.exec {
+            commandLine("git", "-C", clarityDirectory.absolutePath, "rev-parse", "HEAD")
+        }.standardOutput.asText.get().trim()
+        check(actualRevision == clarityForkRevision) {
+            "parser-identity.json records Clarity $clarityForkRevision, but vendor/clarity is $actualRevision"
+        }
+
+        val upstreamTag = "v$clarityUpstreamRelease"
+        val ancestry = providers.exec {
+            commandLine("git", "-C", clarityDirectory.absolutePath,
+                    "merge-base", "--is-ancestor", upstreamTag, clarityForkRevision)
+            isIgnoreExitValue = true
+        }
+        check(ancestry.result.get().exitValue == 0) {
+            "Clarity fork revision $clarityForkRevision is not based on upstream $upstreamTag"
+        }
+    }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    dependsOn(verifyClarityRevision)
+}
 
 tasks.shadowJar {
     archiveFileName.set("dota-replay-exporter.jar")
@@ -35,3 +82,9 @@ tasks.shadowJar {
 }
 
 tasks.build { dependsOn(tasks.shadowJar) }
+
+fun Map<*, *>.requiredString(key: String): String {
+    val value = this[key]
+    require(value is String && value.isNotBlank()) { "$key must be a non-empty string in parser-identity.json" }
+    return value
+}
