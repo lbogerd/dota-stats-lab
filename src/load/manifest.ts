@@ -18,7 +18,12 @@ export type Manifest = {
   extractionId: string;
   matchId: string;
   replaySha256: string;
-  parser: { name: string; version: string };
+  parser: {
+    name: string;
+    version: string;
+    upstreamRelease?: string;
+    forkRevision?: string;
+  };
   exporterVersion: string;
   config: Record<string, unknown>;
   startedAt: string;
@@ -41,7 +46,14 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
   if (!isObject(value.parser) || !isObject(value.config) || !isObject(value.files) || !isObject(value.counts)) {
     throw new Error("Manifest is missing required objects");
   }
-  stringField(value.parser, "name"); stringField(value.parser, "version");
+  stringField(value.parser, "name");
+  const parserVersion = stringField(value.parser, "version");
+  if ("upstreamRelease" in value.parser || "forkRevision" in value.parser) {
+    stringField(value.parser, "upstreamRelease");
+    if (stringField(value.parser, "forkRevision") !== parserVersion) {
+      throw new Error("Manifest parser version and fork revision differ");
+    }
+  }
   stringField(value, "exporterVersion"); stringField(value, "startedAt"); stringField(value, "completedAt");
   numberField(value, "elapsedMs");
 

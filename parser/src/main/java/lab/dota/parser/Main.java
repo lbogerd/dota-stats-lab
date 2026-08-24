@@ -26,9 +26,7 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class Main {
-    static final String PARSER_NAME = "clarity";
-    static final String PARSER_VERSION = "4.0.1";
-    static final String EXPORTER_VERSION = "0.1.3";
+    static final ParserIdentity PARSER_IDENTITY = ParserIdentity.load();
     private static final BigInteger UINT64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
     private static final ObjectMapper JSON = new ObjectMapper()
             .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
@@ -65,8 +63,9 @@ public final class Main {
         }
 
         byte[] canonicalConfig = JSON.writeValueAsBytes(config.asMap());
-        String identityMaterial = actualSha + "\n" + PARSER_NAME + "\n" + PARSER_VERSION + "\n"
-                + EXPORTER_VERSION + "\n" + new String(canonicalConfig, java.nio.charset.StandardCharsets.UTF_8);
+        String identityMaterial = actualSha + "\n" + PARSER_IDENTITY.parserName() + "\n"
+                + PARSER_IDENTITY.parserVersion() + "\n" + PARSER_IDENTITY.exportFormatVersion() + "\n"
+                + new String(canonicalConfig, java.nio.charset.StandardCharsets.UTF_8);
         String extractionId = Hashing.sha256(identityMaterial.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         Path finalDirectory = args.stagingRoot().resolve(args.matchId()).resolve(extractionId);
         if (Files.isRegularFile(finalDirectory.resolve("manifest.json"))) {
@@ -100,8 +99,8 @@ public final class Main {
             manifest.put("extractionId", extractionId);
             manifest.put("matchId", args.matchId());
             manifest.put("replaySha256", actualSha);
-            manifest.put("parser", Map.of("name", PARSER_NAME, "version", PARSER_VERSION));
-            manifest.put("exporterVersion", EXPORTER_VERSION);
+            manifest.put("parser", PARSER_IDENTITY.manifestParser());
+            manifest.put("exporterVersion", PARSER_IDENTITY.exportFormatVersion());
             manifest.put("config", config.asMap());
             manifest.put("startedAt", DateTimeFormatter.ISO_INSTANT.format(started));
             manifest.put("completedAt", DateTimeFormatter.ISO_INSTANT.format(completed));

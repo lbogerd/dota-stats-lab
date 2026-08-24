@@ -1,7 +1,25 @@
 # Dota replay exporter
 
-The exporter uses Clarity 4.0.1 to turn a cached replay into immutable NDJSON
-staging files. The container entry point is:
+The exporter builds the Clarity fork pinned by `vendor/clarity` and turns a
+cached replay into immutable NDJSON staging files. `parser-identity.json` at
+the repository root records the upstream Clarity release, exact fork commit,
+and export-format version. Java, TypeScript, tests, and Docker builds all read
+that file instead of declaring their own version strings.
+
+The manifest keeps these concepts separate. `parser.upstreamRelease` describes
+the fork base, `parser.forkRevision` identifies the parser source, and the
+legacy-compatible `parser.version` contains that same fork revision.
+`exporterVersion` contains the export-format version. Extraction IDs include
+the fork revision and export-format version, so a replay can be parsed again
+and stored alongside an older parser identity.
+
+Initialize the submodule before a local build:
+
+```sh
+git submodule update --init vendor/clarity
+```
+
+The container entry point is:
 
 ```sh
 java -jar /app/parser.jar MATCH_ID

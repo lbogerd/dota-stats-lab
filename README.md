@@ -95,7 +95,9 @@ The parser and loader run without network access and with reduced container priv
 ## Development notes
 
 - Treat applied files in `src/db/migrations` as immutable. Add a later numbered migration for schema changes.
-- Bump the exporter version in both the Java exporter and loader preflight whenever parser output semantics change. Extraction identity depends on this version and the extraction configuration.
+- `parser-identity.json` is the single source of truth for parser versions. `clarityUpstreamRelease` records the upstream release on which the fork is based, `clarityForkRevision` is the full commit checked out at `vendor/clarity`, and `exportFormatVersion` identifies the NDJSON/import contract.
+- Update `clarityForkRevision` whenever the submodule commit changes. A local parser test build checks the value against the submodule checkout. Docker deliberately excludes Git metadata, embeds the checked-in identity file, and builds the copied submodule source.
+- Bump `exportFormatVersion` whenever parser output or import semantics change. The fork revision and export-format version are both part of the extraction ID and loader preflight, so the warehouse can keep separate parses of the same replay.
 - Keep parser-native paths and values in raw storage. Put friendly names and derived Dota statistics in analysis views and macros, not in raw tables.
 - Failed staging directories are intentionally retained for diagnosis. Once investigated, they can be removed from the `dota-stats-staging` volume without affecting cached replays or committed warehouse data.
 - Do not use `docker compose down --volumes` as routine cleanup. The replay and warehouse volumes are the durable source and analysis state.
