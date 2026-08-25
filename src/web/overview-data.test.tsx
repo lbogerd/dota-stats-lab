@@ -8,6 +8,7 @@ import {
   formatMatchDuration,
   lobbyTypeLabel,
   teamName,
+  overviewQueryKeys,
 } from "./overview-data";
 
 describe("match overview presentation", () => {
@@ -40,6 +41,15 @@ describe("match overview presentation", () => {
   it("uses configured team names with stable side fallbacks", () => {
     expect(teamName(2, "Team Spirit")).toBe("Team Spirit");
     expect(teamName(3, null)).toBe("Dire");
+  });
+});
+
+describe("rolling GPM query keys", () => {
+  it("change with the match, window, and output step", () => {
+    expect(overviewQueryKeys.gpm("42", 60, 1)).toEqual(["match-rolling-gpm", "42", 60, 1]);
+    expect(overviewQueryKeys.gpm("42", 10, 1)).not.toEqual(overviewQueryKeys.gpm("42", 60, 1));
+    expect(overviewQueryKeys.gpm("42", 60, 5)).not.toEqual(overviewQueryKeys.gpm("42", 60, 1));
+    expect(overviewQueryKeys.gpm("43", 60, 1)).not.toEqual(overviewQueryKeys.gpm("42", 60, 1));
   });
 });
 
