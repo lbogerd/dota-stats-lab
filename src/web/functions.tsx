@@ -12,6 +12,7 @@ import {
 import { getSqlCatalog } from "../server/sql-catalog.js";
 import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
 import { getMatchRollingGpm, rollingGpmInputSchema } from "../server/gpm.js";
+import { listHeroStats } from "../server/hero-stats.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
 
 export const listSavedQueriesFn = createServerFn({ method: "GET" })
@@ -61,6 +62,9 @@ export const getMatchOverviewFn = createServerFn({ method: "GET" })
 export const getMatchRollingGpmFn = createServerFn({ method: "GET" })
   .validator(rollingGpmInputSchema)
   .handler(({ data }) => getMatchRollingGpm(data));
+
+export const listHeroStatsFn = createServerFn({ method: "GET" })
+  .handler(() => listHeroStats());
 
 export const runSqlFn = createServerFn({ method: "POST" })
   .validator(browserSqlInputSchema)
