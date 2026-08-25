@@ -36,7 +36,7 @@ final class ReplayExporter {
     private long timelineSequence;
     private long entitySequence;
     private int demoTick;
-    private final Map<Long, String> playerResourceIds = new HashMap<>();
+    private final Map<Long, String> teamDataIds = new HashMap<>();
     private final GameClock gameClock = new GameClock();
     private final GoldTimeline goldTimeline = new GoldTimeline();
 
@@ -173,18 +173,18 @@ final class ReplayExporter {
         gameClock.refresh();
     }
 
-    @OnEntityCreated(classPattern = "CDOTA_PlayerResource")
-    public void onPlayerResourceCreated(Context context, Entity entity) throws IOException {
+    @OnEntityCreated(classPattern = "CDOTA_DataRadiant|CDOTA_DataDire")
+    public void onTeamDataCreated(Context context, Entity entity) throws IOException {
         touch(context);
-        String instanceId = ensurePlayerResource(entity);
-        observePlayerResourceState(instanceId, entity);
+        String instanceId = ensureTeamData(entity);
+        observeTeamDataState(instanceId, entity);
     }
 
-    @OnEntityUpdated(classPattern = "CDOTA_PlayerResource")
-    public void onPlayerResourceUpdated(Context context, Entity entity, FieldPath[] paths, int count)
+    @OnEntityUpdated(classPattern = "CDOTA_DataRadiant|CDOTA_DataDire")
+    public void onTeamDataUpdated(Context context, Entity entity, FieldPath[] paths, int count)
             throws IOException {
         touch(context);
-        String instanceId = ensurePlayerResource(entity);
+        String instanceId = ensureTeamData(entity);
         for (int i = 0; i < count; i++) {
             String path = entity.getDtClass().getNameForFieldPath(paths[i]);
             goldTimeline.observe(instanceId, path, entity.getPropertyForFieldPath(paths[i]));
@@ -221,7 +221,7 @@ final class ReplayExporter {
         gameClock.observeProperty(path, entity.getPropertyForFieldPath(fieldPath));
     }
 
-    private void observePlayerResourceState(String instanceId, Entity entity) {
+    private void observeTeamDataState(String instanceId, Entity entity) {
         if (entity.getState() == null) return;
         var iterator = entity.getState().fieldPathIterator();
         while (iterator.hasNext()) {
@@ -231,11 +231,11 @@ final class ReplayExporter {
         }
     }
 
-    private String ensurePlayerResource(Entity entity) throws IOException {
-        String existing = playerResourceIds.get(entity.getUid());
+    private String ensureTeamData(Entity entity) throws IOException {
+        String existing = teamDataIds.get(entity.getUid());
         if (existing != null) return existing;
         String instanceId = Long.toString(++entitySequence);
-        playerResourceIds.put(entity.getUid(), instanceId);
+        teamDataIds.put(entity.getUid(), instanceId);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("extractionId", extractionId);
         row.put("sequence", entitySequence);

@@ -157,7 +157,7 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
   } finally { connection.closeSync(); }
 });
 
-test("loader materializes valid actual-game gold updates using metadata player mappings", async () => {
+test("loader materializes valid team-data gold updates using roster and metadata mappings", async () => {
   const granularMatchId = 46n;
   const granularId = "1".repeat(64);
   const missingMarkerId = "2".repeat(64);
@@ -213,8 +213,8 @@ test("loader materializes valid actual-game gold updates using metadata player m
         ], graph_net_worth: [] },
       ] },
     };
-    const goldPath = (gamePlayerId: string): string =>
-      `m_vecPlayerTeamData.${gamePlayerId}.m_iTotalEarnedGold`;
+    const goldPath = (teamSlot: string): string =>
+      `m_vecDataTeam.${teamSlot}.m_iTotalEarnedGold`;
 
     return {
       "records.ndjson": [
@@ -227,22 +227,23 @@ test("loader materializes valid actual-game gold updates using metadata player m
       ].join(""),
       "blobs.ndjson": "",
       "entity_instances.ndjson": [
-        row({ sequence: 1, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "1", entityIndex: 1, serial: 1, handle: 16385, classId: 1, className: "CDOTA_PlayerResource" }),
-        row({ sequence: 2, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "2", entityIndex: 2, serial: 1, handle: 16386, classId: 2, className: "CTest" }),
+        row({ sequence: 1, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "1", entityIndex: 1, serial: 1, handle: 16385, classId: 1, className: "CDOTA_DataRadiant" }),
+        row({ sequence: 2, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "2", entityIndex: 2, serial: 1, handle: 16386, classId: 2, className: "CDOTA_DataDire" }),
+        row({ sequence: 3, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "3", entityIndex: 3, serial: 1, handle: 16387, classId: 3, className: "CTest" }),
       ].join(""),
       "entity_events.ndjson": "",
       "property_updates.ndjson": [
-        update(15, -10, goldPath("0007"), 50),
-        update(21, -5, goldPath("0007"), 100),
-        update(22, -5, goldPath("0007"), 110),
-        update(30, 0, goldPath("0007"), 120),
-        update(40, 10, goldPath("0008"), 130),
-        update(41, 10, "m_vecPlayerTeamData.0007.m_iTotalEarnedXP", 140),
-        update(42, 10, goldPath("0001"), 200),
-        update(43, 10, goldPath("0007"), 150, "2"),
-        update(99, 59, goldPath("0007"), -1),
-        update(100, 60, goldPath("0007"), 160),
-        update(101, 61, goldPath("0007"), 170),
+        update(15, -10, goldPath("0000"), 50),
+        update(21, -5, goldPath("0000"), 100),
+        update(22, -5, goldPath("0000"), 110),
+        update(30, 0, goldPath("0000"), 120),
+        update(40, 10, goldPath("0001"), 130),
+        update(41, 10, "m_vecDataTeam.0000.m_iTotalEarnedXP", 140),
+        update(42, 10, goldPath("0000"), 200, "2"),
+        update(43, 10, goldPath("0000"), 150, "3"),
+        update(99, 59, goldPath("0000"), -1),
+        update(100, 60, goldPath("0000"), 160),
+        update(101, 61, goldPath("0000"), 170),
       ].join(""),
       "checkpoints.ndjson": "",
     };

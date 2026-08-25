@@ -9,24 +9,27 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class GoldTimelineTest {
     private static final String PLAYER_ZERO =
-            "m_vecPlayerTeamData.0000.m_iTotalEarnedGold";
+            "m_vecDataTeam.0000.m_iTotalEarnedGold";
     private static final String PLAYER_ONE =
-            "m_vecPlayerTeamData.0001.m_iTotalEarnedGold";
+            "m_vecDataTeam.0001.m_iTotalEarnedGold";
 
-    @Test void extractsGamePlayerIdOnlyFromTheExactGoldPath() {
-        assertEquals(0, GoldTimeline.gamePlayerId(PLAYER_ZERO).orElseThrow());
-        assertEquals(17, GoldTimeline.gamePlayerId(
-                "m_vecPlayerTeamData.0017.m_iTotalEarnedGold").orElseThrow());
-        assertFalse(GoldTimeline.gamePlayerId(
+    @Test void extractsTeamSlotOnlyFromTheExactGoldPath() {
+        assertEquals(0, GoldTimeline.teamSlot(PLAYER_ZERO).orElseThrow());
+        assertEquals(17, GoldTimeline.teamSlot(
+                "m_vecDataTeam.0017.m_iTotalEarnedGold").orElseThrow());
+        assertFalse(GoldTimeline.teamSlot(
                 "m_vecPlayerData.0000.m_iTotalEarnedGold").isPresent());
-        assertFalse(GoldTimeline.gamePlayerId(
-                "prefix.m_vecPlayerTeamData.0000.m_iTotalEarnedGold").isPresent());
-        assertFalse(GoldTimeline.gamePlayerId(
-                "m_vecPlayerTeamData.0000.m_iReliableGold").isPresent());
+        assertFalse(GoldTimeline.teamSlot(
+                "prefix.m_vecDataTeam.0000.m_iTotalEarnedGold").isPresent());
+        assertFalse(GoldTimeline.teamSlot(
+                "m_vecDataTeam.0000.m_iReliableGold").isPresent());
     }
 
     @Test void emitsAtMostOneFinalValuePerPlayerPerTickInObservationOrder() {
         GoldTimeline timeline = new GoldTimeline();
+        timeline.observe("resource", PLAYER_ZERO, 50L);
+        timeline.observe("resource", PLAYER_ONE, 50L);
+        assertEquals(2, timeline.finishTick(-1.0).size());
         timeline.observe("resource", PLAYER_ZERO, 100L);
         timeline.observe("resource", PLAYER_ZERO, 125L);
         timeline.observe("resource", PLAYER_ONE, 80L);
@@ -34,9 +37,9 @@ class GoldTimelineTest {
         List<GoldTimeline.GoldUpdate> updates = timeline.finishTick(12.5);
 
         assertEquals(2, updates.size());
-        assertEquals(0, updates.get(0).gamePlayerId());
+        assertEquals(0, updates.get(0).teamSlot());
         assertEquals(125L, updates.get(0).totalGold());
-        assertEquals(1, updates.get(1).gamePlayerId());
+        assertEquals(1, updates.get(1).teamSlot());
         assertEquals(80L, updates.get(1).totalGold());
     }
 
@@ -72,7 +75,38 @@ class GoldTimelineTest {
     @Test void ignoresNegativeCumulativeGoldAndUnrelatedProperties() {
         GoldTimeline timeline = new GoldTimeline();
         timeline.observe("resource", PLAYER_ZERO, -1L);
-        timeline.observe("resource", "m_vecPlayerTeamData.0000.m_iKills", 3L);
+        timeline.observe("resource", "m_vecDataTeam.0000.m_iKills", 3L);
         assertEquals(List.of(), timeline.finishTick(1.0));
+    }
+
+    @Test void keepsTheSameTeamSlotFromDifferentTeamEntitiesSeparate() {
+        GoldTimeline timeline = new GoldTimeline();
+        timeline.observe("radiant", PLAYER_ZERO, 100L);
+        timeline.observe("dire", PLAYER_ZERO, 200L);
+
+        List<GoldTimeline.GoldUpdate> updates = timeline.finishTick(1.0);
+
+        assertEquals(2, updates.size());
+        assertEquals("radiant", updates.get(0).entityInstanceId());
+        assertEquals("dire", updates.get(1).entityInstanceId());
+    }
+
+    @Test void preservesTheLastUntimedValueAsTheTimeZeroBaselineWhenTheClockStartsLate() {
+        GoldTimeline timeline = new GoldTimeline();
+        timeline.observe("resource", PLAYER_ZERO, 0L);
+        assertEquals(List.of(), timeline.finishTick(null));
+        timeline.observe("resource", PLAYER_ZERO, 25L);
+        assertEquals(List.of(), timeline.finishTick(null));
+        timeline.observe("resource", PLAYER_ZERO, 26L);
+
+        List<GoldTimeline.GoldUpdate> baseline = timeline.finishTick(0.03);
+        List<GoldTimeline.GoldUpdate> firstChange = timeline.finishTick(0.06);
+
+        assertEquals(1, baseline.size());
+        assertEquals(25L, baseline.get(0).totalGold());
+        assertEquals(0.0, baseline.get(0).gameTime());
+        assertEquals(1, firstChange.size());
+        assertEquals(26L, firstChange.get(0).totalGold());
+        assertEquals(0.06, firstChange.get(0).gameTime());
     }
 }

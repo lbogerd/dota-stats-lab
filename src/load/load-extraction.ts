@@ -579,31 +579,48 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
          AND metadata.record_type = 'CDOTAMatchMetadataFile'
      ),
      metadata_players AS MATERIALIZED (
-       -- A repeated game-player ID is ambiguous even when one candidate looks
+       -- A repeated player slot is ambiguous even when one candidate looks
        -- usable. Skip it instead of duplicating a gold fact or guessing.
        SELECT
-         game_player_id,
-         min(player_slot) AS player_slot,
+         player_slot,
+         min(game_player_id) AS game_player_id,
          min(team_id) AS team_id
        FROM metadata_player_candidates
        WHERE game_player_id IS NOT NULL
          AND game_player_id >= 0
          AND player_slot IS NOT NULL
          AND team_id IN (2, 3)
-       GROUP BY game_player_id
+       GROUP BY player_slot
+       HAVING count(*) = 1
+     ),
+     roster_players AS MATERIALIZED (
+       SELECT
+         extraction_id,
+         team_id,
+         team_slot,
+         min(player_slot) AS player_slot
+       FROM analysis.players
+       WHERE extraction_id = $id
+         AND team_id IN (2, 3)
+         AND team_slot IS NOT NULL
+       GROUP BY extraction_id, team_id, team_slot
        HAVING count(*) = 1
      ),
      gold_updates AS MATERIALIZED (
        SELECT
          update.extraction_id,
          update.sequence,
+         CASE instance.class_name
+           WHEN 'CDOTA_DataRadiant' THEN 2
+           WHEN 'CDOTA_DataDire' THEN 3
+         END AS team_id,
          try_cast(
            regexp_extract(
              update.property_path,
-             '^m_vecPlayerTeamData\\.([0-9]+)\\.m_iTotalEarnedGold$',
+             '^m_vecDataTeam\\.([0-9]+)\\.m_iTotalEarnedGold$',
              1
-           ) AS INTEGER
-         ) AS game_player_id,
+           ) AS UINTEGER
+         ) AS team_slot,
          update.game_time AS game_time_seconds,
          try_cast(json_extract_string(update.value, '$') AS BIGINT)
            AS total_gold_earned
@@ -611,11 +628,11 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
        JOIN raw.entity_instances AS instance
          ON instance.extraction_id = update.extraction_id
         AND instance.entity_instance_id = update.entity_instance_id
-        AND instance.class_name = 'CDOTA_PlayerResource'
+        AND instance.class_name IN ('CDOTA_DataRadiant', 'CDOTA_DataDire')
        WHERE update.extraction_id = $id
          AND regexp_full_match(
            update.property_path,
-           'm_vecPlayerTeamData\\.[0-9]+\\.m_iTotalEarnedGold'
+           'm_vecDataTeam\\.[0-9]+\\.m_iTotalEarnedGold'
          )
          AND update.game_time IS NOT NULL
          AND isfinite(update.game_time)
@@ -624,22 +641,22 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
      SELECT
        update.extraction_id,
        update.sequence,
-       update.game_player_id,
-       player.player_slot,
-       player.team_id,
+       metadata.game_player_id,
+       roster.player_slot,
+       update.team_id,
        update.game_time_seconds,
        update.total_gold_earned
      FROM gold_updates AS update
-     JOIN metadata_players AS player USING (game_player_id)
-     JOIN analysis.players AS roster
+     JOIN roster_players AS roster
        ON roster.extraction_id = update.extraction_id
-      AND roster.player_slot = player.player_slot
-      AND roster.team_id = player.team_id
-     WHERE update.game_player_id IS NOT NULL
-       AND update.game_player_id >= 0
+      AND roster.team_id = update.team_id
+      AND roster.team_slot = update.team_slot
+     JOIN metadata_players AS metadata
+       ON metadata.player_slot = roster.player_slot
+      AND metadata.team_id = roster.team_id
+     WHERE update.team_id IN (2, 3)
+       AND update.team_slot IS NOT NULL
        AND update.total_gold_earned >= 0
-       AND player.player_slot IS NOT NULL
-       AND player.team_id IN (2, 3)
      ORDER BY update.sequence`,
     { id: manifest.extractionId },
   );

@@ -48,37 +48,89 @@ players AS MATERIALIZED (
     FROM analysis.players AS player
     JOIN selected_extraction AS selected USING (extraction_id)
 ),
-player_values AS (
+events AS MATERIALIZED (
+    -- Parser output is normally tick-coalesced. Collapse any same-time facts
+    -- defensively so timeline lookups retain the latest shared sequence.
     SELECT
+        event.extraction_id,
+        event.player_slot,
+        event.game_time_seconds AS event_game_time_seconds,
+        arg_max(event.total_gold_earned, event.sequence) AS total_gold_earned
+    FROM analysis.player_gold_events AS event
+    JOIN selected_extraction AS selected USING (extraction_id)
+    GROUP BY event.extraction_id, event.player_slot, event.game_time_seconds
+),
+lookup_grid AS MATERIALIZED (
+    SELECT
+        player.extraction_id,
         player.player_slot,
         player.team_id,
-        output.game_time_seconds,
-        60.0
-          * (current_value.total_gold_earned - previous_value.total_gold_earned)
-          / requested_window_seconds AS gpm
+        output.game_time_seconds AS output_game_time_seconds,
+        'current'::VARCHAR AS lookup_kind,
+        output.game_time_seconds AS lookup_game_time_seconds
     FROM players AS player
     CROSS JOIN output_times AS output
-    LEFT JOIN LATERAL (
-        SELECT event.total_gold_earned
-        FROM analysis.player_gold_events AS event
-        WHERE event.extraction_id = player.extraction_id
-          AND event.player_slot = player.player_slot
-          AND event.game_time_seconds <= output.game_time_seconds
-        ORDER BY event.game_time_seconds DESC, event.sequence DESC
-        LIMIT 1
-    ) AS current_value ON true
-    LEFT JOIN LATERAL (
-        SELECT event.total_gold_earned
-        FROM analysis.player_gold_events AS event
-        WHERE event.extraction_id = player.extraction_id
-          AND event.player_slot = player.player_slot
-          AND event.game_time_seconds
-              <= output.game_time_seconds - requested_window_seconds
-        ORDER BY event.game_time_seconds DESC, event.sequence DESC
-        LIMIT 1
-    ) AS previous_value ON true
-    WHERE current_value.total_gold_earned IS NOT NULL
-      AND previous_value.total_gold_earned IS NOT NULL
+    UNION ALL
+    SELECT
+        player.extraction_id,
+        player.player_slot,
+        player.team_id,
+        output.game_time_seconds AS output_game_time_seconds,
+        'previous'::VARCHAR AS lookup_kind,
+        output.game_time_seconds - requested_window_seconds AS lookup_game_time_seconds
+    FROM players AS player
+    CROSS JOIN output_times AS output
+),
+timeline AS MATERIALIZED (
+    SELECT
+        player.extraction_id,
+        player.player_slot,
+        player.team_id,
+        NULL::DOUBLE AS output_game_time_seconds,
+        NULL::VARCHAR AS lookup_kind,
+        event.event_game_time_seconds AS lookup_game_time_seconds,
+        0::UTINYINT AS row_kind,
+        event.total_gold_earned
+    FROM events AS event
+    JOIN players AS player USING (extraction_id, player_slot)
+    UNION ALL
+    SELECT
+        lookup.extraction_id,
+        lookup.player_slot,
+        lookup.team_id,
+        lookup.output_game_time_seconds,
+        lookup.lookup_kind,
+        lookup.lookup_game_time_seconds,
+        1::UTINYINT AS row_kind,
+        NULL::BIGINT AS total_gold_earned
+    FROM lookup_grid AS lookup
+),
+resolved_timeline AS MATERIALIZED (
+    SELECT
+        timeline.*,
+        last_value(total_gold_earned IGNORE NULLS) OVER (
+            PARTITION BY extraction_id, player_slot
+            ORDER BY lookup_game_time_seconds, row_kind
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS resolved_gold
+    FROM timeline
+),
+player_values AS (
+    SELECT
+        resolved.player_slot,
+        resolved.team_id,
+        resolved.output_game_time_seconds AS game_time_seconds,
+        60.0
+          * (
+              max(resolved_gold) FILTER (WHERE lookup_kind = 'current')
+              - max(resolved_gold) FILTER (WHERE lookup_kind = 'previous')
+            )
+          / requested_window_seconds AS gpm
+    FROM resolved_timeline AS resolved
+    WHERE resolved.row_kind = 1
+    GROUP BY resolved.player_slot, resolved.team_id, resolved.output_game_time_seconds
+    HAVING count(resolved_gold) FILTER (WHERE lookup_kind = 'current') = 1
+       AND count(resolved_gold) FILTER (WHERE lookup_kind = 'previous') = 1
 ),
 team_values AS (
     SELECT

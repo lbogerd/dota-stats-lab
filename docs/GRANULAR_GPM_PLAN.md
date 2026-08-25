@@ -68,9 +68,9 @@ The first version will not do these tasks:
 
 Make a small parser test with one real replay before you change the storage contract.
 
-1. Inspect `CDOTA_PlayerResource` updates.
+1. Inspect `CDOTA_DataRadiant` and `CDOTA_DataDire` updates.
 2. Confirm the exact path for `m_iTotalEarnedGold`.
-3. Confirm how the player index maps to `game_player_id`.
+3. Confirm how each team-local index maps to `team_slot`, `player_slot`, and `game_player_id`.
 4. Confirm the game-clock properties on the game-rules entity.
 5. Confirm that combat events and entity updates can use one timeline sequence.
 6. Count gold changes for each player.
@@ -82,6 +82,28 @@ Use [ReplayExporter.java](../parser/src/main/java/lab/dota/parser/ReplayExporter
 
 Stop this work if `m_iTotalEarnedGold` does not match final GPM within the expected rounding difference. Do not use combat-log sums as a fallback.
 
+### Verified replay-source findings
+
+The short, normal, and large benchmark replays establish the following contract:
+
+- Modern Source 2 does not define earned gold on `CDOTA_PlayerResource`.
+  Clarity's current match-end example also reads it from
+  `CDOTA_DataRadiant`/`CDOTA_DataDire` at
+  `m_vecDataTeam.%p.m_iTotalEarnedGold`.
+- The entity class supplies team ID 2 or 3. The vector index is `team_slot`;
+  join `(team_id, team_slot)` through `analysis.players`, then join metadata by
+  `player_slot` for `game_player_id`.
+- Explicit class-pattern listeners bypass the runner's catch-all entity filter.
+  The earlier all-entity diagnostic returned nothing because its default `.*`
+  listener was filtered; the explicit PlayerResource listener was working.
+- The fixtures contain 18,286, 42,702, and 64,452 monotonic raw gold
+  observations respectively, across ten player paths in every replay.
+- The pause-safe clock first becomes available just after time zero. Preserve
+  the last untimed value as the time-zero baseline. It is zero in the short and
+  large fixtures; the normal fixture has Radiant zero and Dire 25.
+
+See the official [Clarity match-end example](https://github.com/skadistats/clarity-examples/blob/master/src/main/java/skadistats/clarity/examples/matchend/Main.java#L56-L67).
+
 ## Phase 2: Capture gold changes
 
 Use the existing entity staging files. Do not add a new staging file.
@@ -89,12 +111,13 @@ Use the existing entity staging files. Do not add a new staging file.
 Change [ReplayExporter.java](../parser/src/main/java/lab/dota/parser/ReplayExporter.java) as follows:
 
 1. Add entity support with explicit class patterns.
-2. Read only the player-resource entity and the game-rules clock entity.
+2. Read only the Radiant/Dire team-data entities and the game-rules clock entity.
 3. Keep the game clock in parser memory.
-4. Find changed `m_iTotalEarnedGold` fields in player-resource updates.
+4. Find changed `m_vecDataTeam.N.m_iTotalEarnedGold` fields in team-data updates.
 5. At tick end, emit at most one value for each changed player.
 6. Keep negative-time changes that are inside the actual game.
-7. Ensure that a value is available at or before game time zero.
+7. Snapshot the last value observed before the game clock is available and emit
+   it at game time zero before timed changes.
 8. Do not emit a row when the cumulative value did not change.
 9. Do not emit unrelated entity properties, entity events, or checkpoints.
 
@@ -102,13 +125,13 @@ Use one timeline sequence for combat events and gold property updates. The actua
 
 Increase the timeline sequence for each combat event and each emitted gold update. Gaps in the combat-event sequence are valid. Preserve parser emission order for rows in the same tick.
 
-Write the player-resource identity to `entity_instances.ndjson`. Write gold changes to `property_updates.ndjson`. The current loader already imports these files and checks their manifest data.
+Write the team-data identity to `entity_instances.ndjson`. Write gold changes to `property_updates.ndjson`. The current loader already imports these files and checks their manifest data.
 
 Each gold update must contain these values:
 
 - extraction ID;
 - update sequence;
-- player-resource entity instance ID;
+- team-data entity instance ID;
 - exact property path;
 - cumulative earned gold;
 - demo tick;
@@ -141,7 +164,9 @@ Add one index for `(extraction_id, player_slot, game_time_seconds)`.
 
 In [load-extraction.ts](../src/load/load-extraction.ts), materialize this table after the match documents and entity updates are available.
 
-Use the property path to get `game_player_id`. Use the metadata player rows to map `game_player_id` to `player_slot` and `team_id`.
+Use the entity class to get `team_id` and the property path to get `team_slot`.
+Join those values through the typed roster to get `player_slot`, then use the
+metadata player row for that slot to get `game_player_id`.
 
 Require this predicate when you select source property updates:
 
@@ -232,7 +257,8 @@ Do not draw ten player lines at the same time. Do not add smoothing that changes
 
 Add parser tests for these cases:
 
-- player index extraction from the property path;
+- team-slot extraction from the property path;
+- separation of the same local slot on the two team entities;
 - one output per player per tick;
 - duplicate-value removal;
 - game time zero;

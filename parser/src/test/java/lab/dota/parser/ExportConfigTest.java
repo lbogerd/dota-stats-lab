@@ -28,7 +28,7 @@ class ExportConfigTest {
 
     @Test void describesOnlyTheExplicitEntityClassesUsedByTheProfile() {
         ExportConfig config = ExportConfig.fromEnvironment(Map.of());
-        assertEquals(java.util.List.of("CDOTA_PlayerResource", "CDOTAGamerulesProxy"),
+        assertEquals(java.util.List.of("CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy"),
                 config.asMap().get("entityClassPatterns"));
     }
 }
