@@ -19,12 +19,13 @@ The default corpus is:
 | Normal | `8955653541` | 38:29 | 166.6 MB |
 | Large/near-hour | `8946303764` | 55:28 | 178.9 MB |
 
-For every replay, the command performs one unmeasured warm-up and three
-measured ingestions. Every ingestion gets a new staging tree and a new DuckDB
-file. Download time is excluded. The final measured normal-match warehouse is
-served by a disposable loopback-only web container for one warm overview
-request, 30 measured overview requests, and one browser acknowledgement probe.
-No benchmark container joins or changes the deployed Compose application.
+For every replay, the command performs one warm-up and three measured
+ingestions. The warm-up is not measured. Every ingestion gets a new staging
+tree and a new DuckDB file. Download time is not measured. A disposable web
+container serves the final normal-match warehouse on loopback. The benchmark
+sends one warm overview request and 30 measured overview requests. It also
+runs one browser acknowledgement probe. Benchmark containers do not join or
+change the deployed Compose application.
 
 Results are written beneath `benchmark-results/TIMESTAMP/` as raw JSONL,
 environment JSON, a combined `results.json`, and a rendered `BENCHMARK.md`.

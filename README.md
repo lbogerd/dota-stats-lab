@@ -1,6 +1,6 @@
 # Dota Replay Data Lab
 
-A compact, container-first laboratory for learning how a complete Dota 2 match becomes useful analytical data. Clarity parses replay files, DuckDB owns the durable warehouse and calculations, and a TanStack Start site presents the match list, scoreboards, team totals, and net-worth analysis.
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, and net-worth analysis.
 
 The default `match-analysis-v1` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
@@ -8,13 +8,14 @@ The default `match-analysis-v1` profile keeps the entire analytically useful mat
 - the complete `CDOTAMatchMetadataFile`, including per-player and team graphs and snapshots;
 - every Clarity combat-log entry in compact typed columns.
 
-It intentionally excludes packet transport, rendering, sound, voice, and generic entity history. Those streams are large and have no defined use case here; the cached replay remains the durable source if a future extraction profile needs them.
+The profile excludes packet transport, rendering, sound, voice, and generic entity history. These streams are large and have no defined use case here. The cached replay remains the source for a future extraction profile.
 
 ## Quick start
 
 Docker Engine with Compose v2 is the only required runtime. The wrapper uses the four external volumes declared in `compose.yaml`.
 
 ```sh
+git submodule update --init --recursive
 ./dota init
 ./dota ingest 8955653541
 docker compose up --detach --build --wait web parser-worker
@@ -22,7 +23,7 @@ docker compose up --detach --build --wait web parser-worker
 
 Open `http://127.0.0.1:3400` locally. The deployed, authenticated instance is at [dota.tainer.run](https://dota.tainer.run).
 
-Download by match ID is the normal path. A local uncompressed or compressed replay is also supported; its suffix is irrelevant because the content is identified by magic bytes:
+Download by match ID is the normal path. You can also use a local or remote replay. The code detects compression from the file contents, not the file name:
 
 ```sh
 DOTA_REPLAY_SOURCE=/absolute/path/replay.dem ./dota ingest MATCH_ID
@@ -30,15 +31,12 @@ DOTA_REPLAY_SOURCE=/absolute/path/replay.dem.bz2 ./dota ingest MATCH_ID
 DOTA_REPLAY_SOURCE=https://example/replay.dem.bz2 ./dota ingest MATCH_ID
 ```
 
-The first successful acquisition is cached with its size, SHA-256 checksum, source, and timestamp. Every cache hit rechecks the metadata, size, checksum, and file format. Downloads stream through a temporary file and are published only after validation. Temporary network errors and HTTP 408, 425, 429, and 5xx responses use bounded retries and honor a bounded `Retry-After`; unavailable replays are reported separately.
+The first successful acquisition is cached with its size, SHA-256 checksum, source, and timestamp. Every cache hit checks the metadata, size, checksum, and file format again. A download stays in a temporary file until validation succeeds. Temporary network errors use a limited number of retries. This also applies to HTTP 408, 425, 429, and 5xx responses. The downloader honors a bounded `Retry-After` value and reports unavailable replays separately.
 
 ## One-command workflows
 
 ```sh
-# Development server (after ./dota init)
-pnpm dev
-
-# Production images
+# Application and test images
 sudo docker compose build test parser web parser-worker e2e
 
 # All automated checks (web/CLI unit and integration tests, parser tests, browser tests)
@@ -48,7 +46,9 @@ pnpm check && pnpm build && pnpm test && pnpm test:web && sudo docker compose bu
 ./scripts/benchmark.sh
 ```
 
-The browser tests expect the Compose web service to be healthy and at least one successfully ingested match to be available. The benchmark procedure and corpus are documented in [docs/BENCHMARK.md](docs/BENCHMARK.md); the latest measured report is [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md).
+Docker is the supported way to run the complete application. Host development needs Node.js 22 and pnpm 10. It also needs explicit host paths for replays, staging data, the warehouse, migrations, and saved queries.
+
+The browser tests expect a healthy Compose web service. They also expect at least one stored match. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is a reference report from the current extraction format.
 
 ## Architecture and ownership
 
@@ -57,9 +57,9 @@ There are two permanent processes:
 1. `web` runs TanStack Start, downloads replays, coordinates durable jobs, performs serialized DuckDB loading, and serves read-only queries.
 2. `parser-worker` runs the JVM Clarity parser without network or warehouse access.
 
-The JVM worker is separate because Clarity is Java and replay parsing is CPU/memory intensive. Process isolation keeps the web server responsive and avoids a high-volume event stream crossing another API boundary. Job request, status, and result files are atomically published in the staging volume. One coordinator advances one job at a time; restart recovery resumes safe states or records a clear failure instead of duplicating work.
+The JVM worker is separate because Clarity is Java and replay parsing uses much CPU and memory. This keeps the web server responsive. It also avoids sending a large event stream through another API. Job request, status, and result files are published atomically in the staging volume. One coordinator advances one job at a time. After a restart, it resumes safe states or records a clear failure.
 
-DuckDB uses a single-process ownership model. A process-local queue plus a recoverable file lease serializes all warehouse opens, so a read never overlaps a write from this application. Each reader opens DuckDB read-only. Each ingestion validates staging before `BEGIN`, imports and materializes summaries in one transaction, marks success immediately before commit, and becomes visible only after commit. A replay checksum plus parser identity, export version, and canonical profile configuration determine the extraction ID, making repeated ingestion idempotent and keeping versions explicit.
+DuckDB uses a single-process ownership model. A local queue and a recoverable file lease serialize all warehouse access. A read cannot overlap a write from this application. Each reader opens DuckDB in read-only mode. An ingestion validates staging before `BEGIN`. It imports data and creates summaries in one transaction. The data becomes visible only after commit. The replay checksum, parser identity, export version, and profile configuration define the extraction ID. Repeated ingestion is therefore safe and does not add duplicate data.
 
 One-shot `fetch`, `parser`, and `loader` services power the CLI. `warehouse-init` applies migrations before a fresh web container starts. The web origin is bound only to `127.0.0.1:3400`; the public hostname is protected by the tainer authentication gateway.
 
@@ -73,7 +73,7 @@ The profile applies Clarity runner filters before generic message/entity handlin
 | `CDOTAMatchMetadataFile` | complete JSON plus typed `analysis.team_time_series` | graphs, inventory/ability snapshots, wards, support statistics, and other future analyses |
 | `CMsgDOTACombatLogEntry` | typed `raw.combat_events` rows | every semantic field exposed by Clarity's combat-log API: combat, economy, levels, runes, wards, modifiers, visibility, abilities, objectives, and locations |
 
-The two complete documents stay in `raw.records`; BLOB fields are kept in `raw.record_blobs`. Common filters, joins, and aggregates never need to parse the large documents because their current fields are normalized. Combat events use typed scalar columns and an extraction/time/type index rather than a full text copy. Internal Clarity string-table indices are omitted because the resolved names are retained and the indices have no independent Dota meaning.
+The two complete documents stay in `raw.records`. BLOB fields stay in `raw.record_blobs`. Common filters, joins, and totals use normalized fields, so they do not parse the large documents. Combat events use typed columns and an extraction/time/type index. Internal Clarity string-table indices are not stored. The resolved names contain the useful Dota information.
 
 Key schemas:
 
@@ -117,11 +117,11 @@ GROUP BY event_type
 ORDER BY events DESC;
 ```
 
-Run these in the containerized shell with `./dota sql`. The optional browser editor accepts only one bounded, read-only `SELECT` and rejects file access, extensions, attachment, copying, configuration, and mutations.
+Run these queries with `./dota sql`. The browser editor accepts one bounded, read-only `SELECT`. It rejects file access, extensions, attachments, copies, configuration changes, and data changes.
 
 ## Website
 
-`/matches` reads the latest successful extraction for every stored match and shows match ID, local date/time, duration, result, and both scores. `/matches/:matchId` queries DuckDB for the overview, both rosters, final items, totals, and a derived final-net-worth comparison. Tables use semantic headers/captions; the phone layout becomes readable statistic cards. Loading, empty, missing-data, and error states are explicit, keyboard focus is visible, and winner text supplements color.
+`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, and final net-worth comparison. Tables use clear headers and captions. On a phone, tables become statistic cards. The site has clear loading, empty, missing-data, and error states. Keyboard focus is visible, and winner text does not depend on color.
 
 Hero and item images are served from Valve's public Steam CDN using Dota 2 asset paths. Dota and Dota 2 are Valve trademarks; this independent learning project is not affiliated with or endorsed by Valve. The local ID/name maps are project-authored compatibility data and unknown/new IDs deliberately fall back to text rather than a broken image.
 
@@ -146,13 +146,15 @@ Package versions are pinned in `package.json` and `pnpm-lock.yaml`. No experimen
 
 ## Tests and real replay fixtures
 
-Node tests cover UBIGINT boundaries, format validation, acquisition/cache/retry behavior, manifests, locking, job recovery, atomic rollback, repeated ingestion, storage policy, migrations, analysis macros, SQL safety, and query files. Vitest covers missing optional overview fields and display conversions. The parser image compiles the Clarity fork and runs Java tests. Playwright covers the phone workflow and the real match-overview path.
+Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, analysis macros, SQL safety, and query files. Vitest covers missing overview fields and display conversions. The parser image compiles the Clarity fork and runs Java tests. Playwright covers the phone workflow and a real match overview.
 
 Large or unlicensed replays are never committed. To use your own parser fixture, keep it outside Git and run:
 
 ```sh
 DOTA_REPLAY_SOURCE=/absolute/path/to/fixture.dem ./dota ingest MATCH_ID
 ```
+
+The repository includes the match IDs and acquisition URLs for all 147 TI 2026 matches. See [tests/fixtures/README.md](tests/fixtures/README.md). The replay files are not in Git.
 
 The default benchmark uses three cached real matches (short, normal, and large), performs one warm-up and three measured fresh-warehouse ingestions apiece, samples peak RSS, and measures 30 warm overview requests. Download time is excluded. Each run owns a disposable database and cannot alter the live warehouse.
 
@@ -166,4 +168,4 @@ The default benchmark uses three cached real matches (short, normal, and large),
 - `parser-identity.json` is the single source of truth for the Clarity fork revision and extraction contract. Bump the export format when output/import semantics change.
 - Do not run `docker compose down --volumes` as routine cleanup. Named volumes are durable application state, though they are not backups.
 
-The parser and loader have no network, run as non-root with reduced capabilities and read-only root filesystems, and retain the original replay after parse or database failure. These controls reduce exposure; Docker is not a complete security boundary.
+The parser and loader have no network access. They run as non-root with reduced capabilities and read-only root file systems. They keep the replay after a parser or database failure. These controls reduce risk, but Docker is not a complete security boundary.
