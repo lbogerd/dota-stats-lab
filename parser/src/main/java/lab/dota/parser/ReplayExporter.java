@@ -3,22 +3,15 @@ package lab.dota.parser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import skadistats.clarity.model.CombatLogEntry;
-import skadistats.clarity.model.Entity;
-import skadistats.clarity.model.FieldPath;
-import skadistats.clarity.processor.entities.OnEntityCreated;
-import skadistats.clarity.processor.entities.OnEntityUpdated;
 import skadistats.clarity.processor.gameevents.OnCombatLogEntry;
 import skadistats.clarity.processor.reader.OnMessage;
-import skadistats.clarity.processor.reader.OnTickEnd;
 import skadistats.clarity.processor.runner.Context;
 import skadistats.clarity.wire.dota.s2.proto.DOTAS2GcMessagesCommon;
 import skadistats.clarity.wire.dota.s2.proto.DOTAS2MatchMetadata;
-import skadistats.clarity.wire.shared.common.proto.CommonNetworkBaseTypes;
 
 import java.io.IOException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
-import java.util.HashMap;
 import java.util.Map;
 
 /** Compact, analysis-oriented default extraction profile. */
@@ -33,15 +26,7 @@ final class ReplayExporter {
     private DOTAS2MatchMetadata.CDOTAMatchMetadataFile metadata;
     private int matchTick;
     private int metadataTick;
-    private long timelineSequence;
-    private long entitySequence;
-    private int currentDemoTick;
-    private double gameTime = Double.NaN;
-    private final Map<Long, Long> entityIds = new HashMap<>();
-    private final Map<String, PendingGold> pendingGold = new HashMap<>();
-    private final Map<String, Long> lastGold = new HashMap<>();
-
-    private record PendingGold(Entity entity, String path, long value) {}
+    private long combatSequence;
 
     ReplayExporter(String extractionId, NdjsonSet output, ExportConfig config, Instant startedAt) {
         this.extractionId = extractionId;
@@ -74,7 +59,7 @@ final class ReplayExporter {
         touch();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("extractionId", extractionId);
-        row.put("sequence", ++timelineSequence);
+        row.put("sequence", ++combatSequence);
         row.put("gameTime", event.hasTimestamp() ? event.getTimestamp() : null);
         row.put("rawTime", event.hasTimestampRaw() ? event.getTimestampRaw() : null);
         row.put("eventType", event.hasType() ? event.getType().name() : null);
@@ -157,103 +142,13 @@ final class ReplayExporter {
         output.write("combatEvents", row);
     }
 
-    @OnMessage(CommonNetworkBaseTypes.CNETMsg_Tick.class)
-    public void onTick(CommonNetworkBaseTypes.CNETMsg_Tick message) {
-        currentDemoTick = message.getTick();
-    }
-
-    @OnEntityCreated(classPattern = "CDOTA_PlayerResource|CDOTAGamerulesProxy")
-    public void onEntityCreated(Entity entity) throws IOException {
-        touch();
-        ensureEntity(entity);
-        captureState(entity);
-    }
-
-    @OnEntityUpdated(classPattern = "CDOTA_PlayerResource|CDOTAGamerulesProxy")
-    public void onEntityUpdated(Entity entity, FieldPath[] paths, int count) throws IOException {
-        touch();
-        ensureEntity(entity);
-        for (int i = 0; i < count; i++) {
-            String path = entity.getDtClass().getNameForFieldPath(paths[i]);
-            Object value = entity.getPropertyForFieldPath(paths[i]);
-            if (entity.getDtClass().getDtName().equals("CDOTAGamerulesProxy") && path.endsWith("m_fGameTime")
-                    && value instanceof Number number) {
-                gameTime = number.doubleValue();
-            }
-            if (entity.getDtClass().getDtName().equals("CDOTA_PlayerResource")
-                    && path.endsWith("m_iTotalEarnedGold") && value instanceof Number number
-                    && number.longValue() >= 0) {
-                pendingGold.put(goldKey(entity, path), new PendingGold(entity, path, number.longValue()));
-            }
-        }
-    }
-
-    @OnTickEnd
-    public void onTickEnd(boolean synthetic) throws IOException {
-        touch();
-        for (PendingGold pending : pendingGold.values()) {
-            String key = goldKey(pending.entity(), pending.path());
-            if (lastGold.getOrDefault(key, Long.MIN_VALUE) == pending.value()) continue;
-            Long instanceId = entityIds.get(pending.entity().getUid());
-            if (instanceId == null || !Double.isFinite(gameTime)) continue;
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("extractionId", extractionId);
-            row.put("sequence", ++timelineSequence);
-            row.put("entityInstanceId", instanceId);
-            row.put("propertyPath", pending.path());
-            row.put("valueType", "Long");
-            row.put("value", pending.value());
-            row.put("demoTick", currentDemoTick);
-            row.put("netTick", null);
-            row.put("gameTime", gameTime);
-            output.write("propertyUpdates", row);
-            lastGold.put(key, pending.value());
-        }
-        pendingGold.clear();
-    }
-
-    private void captureState(Entity entity) {
-        if (!entity.getDtClass().getDtName().equals("CDOTA_PlayerResource") || entity.getState() == null) return;
-        var iterator = entity.getState().fieldPathIterator();
-        while (iterator.hasNext()) {
-            FieldPath fieldPath = iterator.next();
-            String path = entity.getDtClass().getNameForFieldPath(fieldPath);
-            if (!path.endsWith("m_iTotalEarnedGold")) continue;
-            Object value = entity.getPropertyForFieldPath(fieldPath);
-            if (value instanceof Number number && number.longValue() >= 0) {
-                pendingGold.put(goldKey(entity, path), new PendingGold(entity, path, number.longValue()));
-            }
-        }
-    }
-
-    private static String goldKey(Entity entity, String path) { return entity.getUid() + ":" + path; }
-
-    private void ensureEntity(Entity entity) throws IOException {
-        if (entityIds.containsKey(entity.getUid())) return;
-        long id = ++entitySequence;
-        entityIds.put(entity.getUid(), id);
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("extractionId", extractionId);
-        row.put("sequence", id);
-        row.put("entityInstanceId", id);
-        row.put("entityIndex", entity.getIndex());
-        row.put("serial", entity.getSerial());
-        row.put("handle", entity.getHandle());
-        row.put("classId", entity.getDtClass().getClassId());
-        row.put("className", entity.getDtClass().getDtName());
-        row.put("demoTick", currentDemoTick);
-        row.put("netTick", null);
-        row.put("gameTime", Double.isFinite(gameTime) ? gameTime : null);
-        output.write("entityInstances", row);
-    }
-
     void finish() throws Exception {
         if (match == null) throw new IOException("replay does not contain CMsgDOTAMatch");
         if (metadata == null) throw new IOException("replay does not contain CDOTAMatchMetadataFile");
         writeRecord(1, matchTick, "match_overview", match);
         writeRecord(2, metadataTick, "match_metadata", metadata);
-        log.info("profile={} exported 2 match documents and {} timeline events",
-                PROFILE, timelineSequence);
+        log.info("profile={} exported 2 match documents and {} typed combat events",
+                PROFILE, combatSequence);
     }
 
     private void writeRecord(long sequence, int tick, String category,
@@ -267,7 +162,7 @@ final class ReplayExporter {
         row.put("category", category);
         row.put("recordType", message.getDescriptorForType().getName());
         row.put("payload", ValueEncoder.encodeMessage(message, "", (path, bytes) -> {
-            long blobSequence = 2 + timelineSequence + output.totalRecords();
+            long blobSequence = 2 + combatSequence + output.totalRecords();
             Map<String, Object> blob = new LinkedHashMap<>();
             blob.put("extractionId", extractionId);
             blob.put("sequence", blobSequence);

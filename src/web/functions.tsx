@@ -11,7 +11,6 @@ import {
 } from "../server/saved-queries.js";
 import { getSqlCatalog } from "../server/sql-catalog.js";
 import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
-import { getMatchGpm } from "../server/gpm.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
 
 export const listSavedQueriesFn = createServerFn({ method: "GET" })
@@ -41,11 +40,6 @@ const browserSqlInputSchema = z.object({
   sql: z.string().min(1).max(100_000),
 });
 
-const gpmInputSchema = matchIdInputSchema.extend({
-  windowSeconds: z.number().int(),
-  outputStepSeconds: z.number().int(),
-});
-
 export const listMatchesFn = createServerFn({ method: "GET" })
   .handler(() => listMatches());
 
@@ -62,10 +56,6 @@ export const listMatchOverviewsFn = createServerFn({ method: "GET" })
 export const getMatchOverviewFn = createServerFn({ method: "GET" })
   .validator(matchIdInputSchema)
   .handler(({ data }) => getMatchOverview(data.matchId));
-
-export const getMatchGpmFn = createServerFn({ method: "GET" })
-  .validator(gpmInputSchema)
-  .handler(({ data }) => getMatchGpm(data.matchId, data.windowSeconds, data.outputStepSeconds));
 
 export const runSqlFn = createServerFn({ method: "POST" })
   .validator(browserSqlInputSchema)
