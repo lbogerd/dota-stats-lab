@@ -111,7 +111,8 @@ async function analysisRowCount(connection: DuckDBConnection, extractionId: stri
        + (SELECT count(*) FROM analysis.players WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.player_items WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id)
-       + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id) AS rows`,
+       + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.hero_draft_events WHERE extraction_id = $id) AS rows`,
     { id: extractionId },
   );
   return Number((result.getRowObjects()[0] as { rows: bigint }).rows);
@@ -542,6 +543,24 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
      WHERE overview.extraction_id = $id AND overview.record_type = 'CMsgDOTAMatch'
        AND json_extract_string(player.value, '$.team_number') IN
            ('DOTA_GC_TEAM_GOOD_GUYS', 'DOTA_GC_TEAM_BAD_GUYS')`,
+    { id: manifest.extractionId },
+  );
+
+  await connection.run(
+    `INSERT INTO analysis.hero_draft_events
+     SELECT
+       $id,
+       draft.key::UINTEGER,
+       try_cast(json_extract_string(draft.value, '$.hero_id') AS INTEGER),
+       try_cast(json_extract_string(draft.value, '$.is_pick') AS BOOLEAN),
+       try_cast(json_extract_string(draft.value, '$.team') AS INTEGER)
+     FROM raw.records AS overview,
+          json_each(overview.payload, '$.picks_bans') AS draft
+     WHERE overview.extraction_id = $id
+       AND overview.record_type = 'CMsgDOTAMatch'
+       AND try_cast(json_extract_string(draft.value, '$.hero_id') AS INTEGER) > 0
+       AND json_type(draft.value, '$.is_pick') = 'BOOLEAN'
+       AND try_cast(json_extract_string(draft.value, '$.team') AS INTEGER) IN (0, 1)`,
     { id: manifest.extractionId },
   );
 

@@ -74,6 +74,75 @@ test("preflight and storage distinguish parser identities for the same replay", 
   } finally { connection.closeSync(); }
 });
 
+test("loader normalizes valid draft events and counts them as analysis rows", async () => {
+  const draftExtractionId = "7".repeat(64);
+  const draftMatchId = 47n;
+  const row = (value: Record<string, unknown>): string => `${JSON.stringify({
+    extractionId: draftExtractionId,
+    ...value,
+  })}\n`;
+  const rows: Record<string, string> = {
+    ...Object.fromEntries(Object.keys(goodRows).map((name) => [name, ""])),
+    "records.ndjson": [
+      row({
+        sequence: 1, demoTick: 1, netTick: null, gameTime: 60,
+        category: "match_overview", recordType: "CMsgDOTAMatch",
+        payload: {
+          match_id: draftMatchId.toString(), duration: 60,
+          players: [{
+            player_slot: 0, team_number: "DOTA_GC_TEAM_GOOD_GUYS",
+            team_slot: 0, hero_id: 1, gold_per_min: 500, xp_per_min: 600,
+          }],
+          picks_bans: [
+            { hero_id: 1, is_pick: true, team: 0 },
+            { hero_id: 2, is_pick: false, team: 1 },
+            { hero_id: 0, is_pick: false, team: 0 },
+            { hero_id: 3, is_pick: "false", team: 0 },
+            { hero_id: 4, is_pick: false, team: 2 },
+          ],
+        },
+      }),
+      row({
+        sequence: 2, demoTick: 2, netTick: null, gameTime: 60,
+        category: "match_metadata", recordType: "CDOTAMatchMetadataFile",
+        payload: { version: 1, metadata: { teams: [] } },
+      }),
+    ].join(""),
+  };
+
+  let logs = "";
+  const stderrWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+    logs += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    assert.equal((await loadClaimedExtraction(
+      await stage(draftExtractionId, rows, draftMatchId),
+    )).status, "loaded");
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(
+      `SELECT draft_order, hero_id, is_pick, team_index
+       FROM analysis.hero_draft_events
+       WHERE extraction_id = $id
+       ORDER BY draft_order`,
+      { id: draftExtractionId },
+    );
+    assert.deepEqual(result.getRowObjectsJson(), [
+      { draft_order: 0, hero_id: 1, is_pick: true, team_index: 0 },
+      { draft_order: 1, hero_id: 2, is_pick: false, team_index: 1 },
+    ]);
+  } finally { connection.closeSync(); }
+
+  assert.match(logs, new RegExp(`ingestion=${draftExtractionId} phase=summary .* rows=14\\n`));
+});
+
 test("loader stores only retained rows and catalogs stored counts", async () => {
   const filteredId = "e".repeat(64);
   const filteredMatchId = 44n;
