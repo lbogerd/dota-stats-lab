@@ -1,19 +1,61 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "dota-hero-stats-"));
 process.env.WAREHOUSE_PATH = path.join(root, "warehouse", "dota.duckdb");
-process.env.MIGRATION_ROOT = path.resolve("src/db/migrations");
+const sourceMigrationRoot = path.resolve("src/db/migrations");
+const migrationRoot = path.join(root, "migrations");
+await mkdir(migrationRoot);
+for (const name of await readdir(sourceMigrationRoot)) {
+  if (/^00[1-9]_.*\.sql$/.test(name) || /^010_.*\.sql$/.test(name)) {
+    await copyFile(path.join(sourceMigrationRoot, name), path.join(migrationRoot, name));
+  }
+}
+process.env.MIGRATION_ROOT = migrationRoot;
 
 const { migrate, openWarehouse } = await import("../src/db/database.js");
 const warehouse = await openWarehouse();
 await migrate(warehouse.connection);
+const backfillExtractionId = "hero-backfill";
+await warehouse.connection.run(
+  `INSERT INTO raw.records
+   VALUES ($id, 1, NULL, NULL, NULL, 'match_overview', 'CMsgDOTAMatch', $payload::JSON)`,
+  {
+    id: backfillExtractionId,
+    payload: JSON.stringify({ picks_bans: [
+      { hero_id: 1, is_pick: true, team: 0 },
+      { hero_id: 2, is_pick: false, team: 1 },
+      { hero_id: 0, is_pick: false, team: 0 },
+      { hero_id: 3, is_pick: "false", team: 0 },
+      { hero_id: 4, is_pick: false, team: 2 },
+      { hero_id: "5", is_pick: false, team: 0 },
+      { hero_id: 6, is_pick: false, team: "1" },
+    ] }),
+  },
+);
+await copyFile(
+  path.join(sourceMigrationRoot, "011_hero_stats.sql"),
+  path.join(migrationRoot, "011_hero_stats.sql"),
+);
+await migrate(warehouse.connection);
 after(warehouse.close);
 
-test("an empty warehouse has no hero statistics", async () => {
+test("migration backfills valid draft events and an empty match scope has no hero statistics", async () => {
+  const drafts = await warehouse.connection.runAndReadAll(
+    `SELECT draft_order, hero_id, is_pick, team_index
+     FROM analysis.hero_draft_events
+     WHERE extraction_id = $id
+     ORDER BY draft_order`,
+    { id: backfillExtractionId },
+  );
+  assert.deepEqual(drafts.getRowObjectsJson(), [
+    { draft_order: 0, hero_id: 1, is_pick: true, team_index: 0 },
+    { draft_order: 1, hero_id: 2, is_pick: false, team_index: 1 },
+  ]);
+
   const result = await warehouse.connection.runAndReadAll("SELECT * FROM analysis.hero_stats()");
   assert.deepEqual(result.getRowObjectsJson(), []);
 });

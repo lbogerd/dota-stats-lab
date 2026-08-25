@@ -99,6 +99,8 @@ test("loader normalizes valid draft events and counts them as analysis rows", as
             { hero_id: 0, is_pick: false, team: 0 },
             { hero_id: 3, is_pick: "false", team: 0 },
             { hero_id: 4, is_pick: false, team: 2 },
+            { hero_id: "5", is_pick: false, team: 0 },
+            { hero_id: 6, is_pick: false, team: "1" },
           ],
         },
       }),

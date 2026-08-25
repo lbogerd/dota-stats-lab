@@ -558,8 +558,10 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
           json_each(overview.payload, '$.picks_bans') AS draft
      WHERE overview.extraction_id = $id
        AND overview.record_type = 'CMsgDOTAMatch'
+       AND json_type(draft.value, '$.hero_id') IN ('BIGINT', 'UBIGINT')
        AND try_cast(json_extract_string(draft.value, '$.hero_id') AS INTEGER) > 0
        AND json_type(draft.value, '$.is_pick') = 'BOOLEAN'
+       AND json_type(draft.value, '$.team') IN ('BIGINT', 'UBIGINT')
        AND try_cast(json_extract_string(draft.value, '$.team') AS INTEGER) IN (0, 1)`,
     { id: manifest.extractionId },
   );
