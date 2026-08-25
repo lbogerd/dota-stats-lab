@@ -104,6 +104,16 @@ test("mobile user can open a real match overview", async ({ page }) => {
   await expect(page.locator("h1")).toHaveText(/^#[1-9][0-9]*$/);
   await expect(page.getByText("Winning team:", { exact: false })).toBeVisible();
   await expect(page.getByText("DuckDB analysis", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Granular GPM" })).toBeVisible();
+  const gpmWindow = page.getByLabel("Rolling GPM window");
+  await expect(gpmWindow).toHaveValue("60");
+  const rollingGraph = page.getByText("Rolling GPM - last 60 seconds", { exact: true });
+  const unavailable = page.getByText(/Granular gold data is unavailable for this extraction/);
+  await expect(rollingGraph.or(unavailable)).toBeVisible();
+  if (await rollingGraph.isVisible()) {
+    await gpmWindow.selectOption("1");
+    await expect(page.getByText("Rolling GPM - last 1 seconds", { exact: true })).toBeVisible();
+  }
   await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
   await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();
 

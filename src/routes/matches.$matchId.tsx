@@ -4,6 +4,7 @@ import { ArrowLeft, BarChart3, Clock3, ImageOff, Shield, Swords, Trophy } from "
 import { useState } from "react";
 import type { MatchOverviewPlayer, MatchOverviewTeamTotals } from "../server/overview";
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
+import { GpmSection } from "../web/gpm-section";
 import {
   displayValue,
   formatInteger,
@@ -114,6 +115,13 @@ function MatchDetail() {
       dire={match.netWorthAnalysis.direNetWorth}
       advantage={match.netWorthAnalysis.advantage}
       leader={match.netWorthAnalysis.leader}
+    />
+
+    <GpmSection
+      matchId={matchId}
+      players={match.players}
+      radiantName={teamName(2, summary.radiantTeamName)}
+      direName={teamName(3, summary.direTeamName)}
     />
 
     <div className="mt-6 space-y-6">
