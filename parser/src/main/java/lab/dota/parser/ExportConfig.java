@@ -24,7 +24,7 @@ record ExportConfig(long maxInputBytes, long maxOutputBytes, long maxRecords,
         result.put("checkpointIntervalSeconds", checkpointIntervalSeconds);
         result.put("messageTypes", java.util.List.of(
                 "CMsgDOTAMatch", "CDOTAMatchMetadataFile", "CMsgDOTACombatLogEntry"));
-        result.put("entityClassPatterns", java.util.List.of());
+        result.put("entityClassPatterns", java.util.List.of("CDOTA_PlayerResource", "CDOTAGamerulesProxy"));
         return result;
     }
 

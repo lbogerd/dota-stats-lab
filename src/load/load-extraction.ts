@@ -110,7 +110,8 @@ async function analysisRowCount(connection: DuckDBConnection, extractionId: stri
        (SELECT count(*) FROM analysis.matches WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.players WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.player_items WHERE extraction_id = $id)
-       + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id) AS rows`,
+       + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id) AS rows`,
     { id: extractionId },
   );
   return Number((result.getRowObjects()[0] as { rows: bigint }).rows);
@@ -558,6 +559,40 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
      WHERE metadata.extraction_id = $id
        AND metadata.record_type = 'CDOTAMatchMetadataFile'
        AND try_cast(json_extract_string(team.value, '$.dota_team') AS INTEGER) IN (2, 3)`,
+    { id: manifest.extractionId },
+  );
+
+  await connection.run(
+    `INSERT INTO analysis.player_gold_events
+     SELECT
+       update.extraction_id,
+       update.sequence,
+       try_cast(regexp_extract(update.property_path, '\\.(\\d+)\\.', 1) AS INTEGER) AS game_player_id,
+       player.player_slot,
+       player.team_id,
+       update.game_time,
+       try_cast(json_extract_string(update.value, '$') AS BIGINT)
+     FROM raw.entity_property_updates AS update
+     JOIN raw.entity_instances AS instance
+       ON instance.extraction_id = update.extraction_id
+      AND instance.entity_instance_id = update.entity_instance_id
+      AND instance.class_name = 'CDOTA_PlayerResource'
+     JOIN analysis.players AS player
+       ON player.extraction_id = update.extraction_id
+      AND player.team_slot = CASE
+        WHEN try_cast(regexp_extract(update.property_path, '\\.(\\d+)\\.', 1) AS INTEGER) < 5
+          THEN try_cast(regexp_extract(update.property_path, '\\.(\\d+)\\.', 1) AS INTEGER)
+        ELSE try_cast(regexp_extract(update.property_path, '\\.(\\d+)\\.', 1) AS INTEGER) - 5
+      END
+      AND player.team_id = CASE
+        WHEN try_cast(regexp_extract(update.property_path, '\\.(\\d+)\\.', 1) AS INTEGER) < 5 THEN 2 ELSE 3 END
+     WHERE update.extraction_id = $id
+       AND update.property_path LIKE '%m_iTotalEarnedGold'
+       AND update.game_time IS NOT NULL
+       AND try_cast(regexp_extract(update.property_path, '\\.(\\d+)\\.', 1) AS INTEGER) BETWEEN 0 AND 9
+       AND try_cast(json_extract_string(update.value, '$') AS BIGINT) >= 0
+       AND analysis.is_actual_game(update.extraction_id, update.sequence)
+     ORDER BY update.sequence` ,
     { id: manifest.extractionId },
   );
 }
