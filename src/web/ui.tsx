@@ -34,14 +34,3 @@ export function PrimaryButton({ children, className = "", ...props }: React.Butt
 export function SecondaryButton({ children, className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#d9ddd5] bg-[#fbfaf5] px-3.5 text-sm font-semibold text-[#334039] transition hover:border-[#b7c2b9] hover:bg-white disabled:cursor-not-allowed disabled:opacity-55 ${className}`} {...props}>{children}</button>;
 }
-
-export function EmptyState({ icon, title, body, action }: { icon: ReactNode; title: string; body: string; action?: ReactNode }) {
-  return (
-    <div className="card flex min-h-64 flex-col items-center justify-center px-6 py-10 text-center">
-      <div className="mb-4 grid size-12 place-items-center rounded-2xl bg-[#e5ecdf] text-[#315f4a]">{icon}</div>
-      <h2 className="text-base font-semibold tracking-[-0.02em]">{title}</h2>
-      <p className="mt-1.5 max-w-sm text-sm leading-6 text-[#707a74]">{body}</p>
-      {action && <div className="mt-5">{action}</div>}
-    </div>
-  );
-}

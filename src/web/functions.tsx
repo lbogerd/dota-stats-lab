@@ -32,10 +32,6 @@ export const deleteSavedQueryFn = createServerFn({ method: "POST" })
   .validator(savedQueryNameInputSchema)
   .handler(({ data }) => createSavedQueryStore().delete(data.name));
 
-export const downloadSavedQueryFn = createServerFn({ method: "GET" })
-  .validator(savedQueryNameInputSchema)
-  .handler(({ data }) => createSavedQueryStore().download(data.name));
-
 const matchIdInputSchema = z.object({
   matchId: z.string().refine(isValidMatchId, "Enter a positive match ID in the DuckDB UBIGINT range."),
 });

@@ -147,18 +147,6 @@ export function formatRelative(date: string): string {
   return formatter.format(Math.round(hours / 24), "day");
 }
 
-export function formatDuration(totalSeconds: number): string {
-  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-}
-
-export function formatBytes(bytes: number | string | null): string {
-  if (bytes === null) return "—";
-  const value = Number(bytes);
-  if (!Number.isFinite(value)) return "—";
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
-  return `${(value / 1_000_000).toFixed(1)} MB`;
-}
-
 export function formatCount(value: number | string): string {
   const count = Number(value);
   if (!Number.isFinite(count)) return String(value);

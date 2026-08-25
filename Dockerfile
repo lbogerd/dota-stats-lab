@@ -54,7 +54,6 @@ ENV NODE_ENV=production \
     STAGING_CLAIMED_ROOT=/work/staging/claimed \
     JOBS_ROOT=/work/staging/jobs \
     MIGRATION_ROOT=/app/migrations \
-    QUERY_ROOT=/app/queries \
     WAREHOUSE_PATH=/data/warehouse/dota.duckdb \
     WAREHOUSE_LOCK_PATH=/data/warehouse/dota.duckdb.lock
 
@@ -68,7 +67,6 @@ COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
 COPY --from=node-production --chown=dota:dota /build/node_modules ./node_modules
 COPY --from=node-production --chown=dota:dota /build/dist ./dist
 COPY --from=node-production --chown=dota:dota /build/src/db/migrations ./migrations
-COPY --from=node-production --chown=dota:dota /build/src/db/queries ./queries
 
 USER 10001:10001
 ENTRYPOINT ["node", "/app/dist/src/cli/index.js"]
@@ -115,7 +113,6 @@ COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
 COPY --from=node-production --chown=dota:dota /build/node_modules ./node_modules
 COPY --from=node-production --chown=dota:dota /build/dist ./dist
 COPY --from=node-production --chown=dota:dota /build/src/db/migrations ./migrations
-COPY --from=node-production --chown=dota:dota /build/src/db/queries ./queries
 
 USER 10001:10001
 EXPOSE 3000
