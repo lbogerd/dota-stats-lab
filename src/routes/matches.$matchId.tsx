@@ -1,8 +1,9 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, BarChart3, Clock3, ImageOff, Shield, Swords, Trophy } from "lucide-react";
 import { useState } from "react";
 import type { MatchOverviewPlayer, MatchOverviewTeamTotals } from "../server/overview";
+import type { GpmSeries } from "../server/gpm";
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
 import {
   displayValue,
@@ -13,6 +14,7 @@ import {
   lobbyTypeLabel,
   localTimeZoneLabel,
   matchOverviewQuery,
+  matchGpmQuery,
   teamName,
 } from "../web/overview-data";
 import { StatusBadge } from "../web/ui";
@@ -116,6 +118,8 @@ function MatchDetail() {
       leader={match.netWorthAnalysis.leader}
     />
 
+    <GpmSection matchId={matchId} players={match.players} radiantName={teamName(2, summary.radiantTeamName)} direName={teamName(3, summary.direTeamName)} />
+
     <div className="mt-6 space-y-6">
       <TeamRoster
         teamId={2}
@@ -134,6 +138,65 @@ function MatchDetail() {
     </div>
   </>;
 }
+
+function GpmSection({ matchId, players, radiantName, direName }: {
+  matchId: string; players: MatchOverviewPlayer[]; radiantName: string; direName: string;
+}) {
+  const [windowSeconds, setWindowSeconds] = useState(60);
+  const [teamId, setTeamId] = useState(2);
+  const query = useQuery(matchGpmQuery(matchId, windowSeconds));
+  const teamSeries = query.data?.series.filter((series) => series.kind === "team") ?? [];
+  const playerSeries = query.data?.series.filter((series) => series.kind === "player" && series.teamId === teamId) ?? [];
+  const playerLabels = Object.fromEntries(players.map((player) => {
+    const hero = player.heroId === null ? "" : ` · ${heroAsset(player.heroId).name}`;
+    return [player.playerSlot, `${player.playerName || "Unknown player"}${hero}`];
+  }));
+  return <section className="card mt-6 p-5 sm:p-6" aria-labelledby="gpm-title">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div><p className="eyebrow">Economy timeline</p><h2 id="gpm-title" className="mt-1 text-lg font-semibold">Granular GPM</h2><p className="mt-1 text-sm text-[#526158]">Cumulative earned gold, measured on game time.</p></div>
+      <label className="flex items-center gap-2 text-sm font-semibold text-[#405047]">Window
+        <select aria-label="GPM window" value={windowSeconds} onChange={(event) => setWindowSeconds(Number(event.target.value))} className="h-10 rounded-xl border border-[#d7dbd3] bg-white px-3">
+          {[1, 5, 10, 30, 60, 300].map((value) => <option key={value} value={value}>{value === 300 ? "5m" : `${value}s`}</option>)}
+        </select>
+      </label>
+    </div>
+    {query.isPending && <div className="mt-5 rounded-xl bg-[#eef0e9] p-5 text-sm" role="status">Loading rolling GPM…</div>}
+    {query.isError && <div className="mt-5 rounded-xl border border-[#e1b8ad] bg-[#fff0ec] p-5 text-sm text-[#8e3e32]" role="alert">Rolling GPM is unavailable.</div>}
+    {query.isSuccess && query.data.series.length === 0 && <div className="mt-5 rounded-xl border border-[#e1c784] bg-[#fff8e4] p-5 text-sm text-[#614d1c]" role="status">Granular gold data is unavailable for this extraction.</div>}
+    {query.isSuccess && query.data.series.length > 0 && <div className="mt-5 space-y-5">
+      <GpmChart title={`Rolling GPM - last ${windowSeconds === 300 ? "5 minutes" : `${windowSeconds} seconds`}`} series={teamSeries} labels={{ 2: radiantName, 3: direName }} />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-[#526158]">Players</span>
+        {[{ id: 2, name: radiantName }, { id: 3, name: direName }].map((team) => <button key={team.id} type="button" onClick={() => setTeamId(team.id)} aria-pressed={teamId === team.id} className={`rounded-lg px-3 py-2 text-xs font-semibold ${teamId === team.id ? "bg-[#315f4a] text-white" : "bg-[#eef0e9] text-[#405047]"}`}>{team.name}</button>)}
+      </div>
+      <GpmChart title={`Player rolling GPM - ${teamId === 2 ? radiantName : direName}`} series={playerSeries} labels={playerLabels} />
+    </div>}
+  </section>;
+}
+
+function GpmChart({ title, series, labels }: { title: string; series: GpmSeries[]; labels: Record<number, string> }) {
+  const [pointIndex, setPointIndex] = useState(0);
+  const points = series.flatMap((line) => line.points);
+  const maxTime = Math.max(...points.map((point) => point.gameTimeSeconds), 1);
+  const maxValue = Math.max(...points.map((point) => point.gpm), 1);
+  const minValue = Math.min(...points.map((point) => point.gpm), 0);
+  const range = Math.max(maxValue - minValue, 1);
+  const selected = points[Math.min(pointIndex, Math.max(points.length - 1, 0))];
+  return <div aria-label={`${title}. ${series.length} lines.`} tabIndex={0} role="img" onKeyDown={(event) => {
+    if (event.key === "ArrowRight") setPointIndex((value) => Math.min(value + 1, points.length - 1));
+    if (event.key === "ArrowLeft") setPointIndex((value) => Math.max(value - 1, 0));
+  }} className="rounded-xl border border-[#e0e3da] bg-white p-3 outline-none sm:p-4">
+    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">{title}</h3>{selected && <p className="font-mono text-xs text-[#526158]">{formatChartTime(selected.gameTimeSeconds)} · {Math.round(selected.gpm).toLocaleString()} GPM</p>}</div>
+    <svg viewBox="0 0 720 240" className="mt-3 h-auto w-full" aria-hidden="true">
+      <line x1="42" y1="14" x2="42" y2="210" stroke="#dfe2d9" /><line x1="42" y1="210" x2="710" y2="210" stroke="#dfe2d9" />
+      {series.map((line, lineIndex) => <polyline key={`${line.kind}-${line.teamId}-${line.playerSlot}`} fill="none" stroke={lineIndex % 2 === 0 ? "#315f4a" : "#d36b4f"} strokeWidth="2.5" points={line.points.map((point) => `${42 + (point.gameTimeSeconds / maxTime) * 668},${210 - ((point.gpm - minValue) / range) * 196}`).join(" ")} />)}
+    </svg>
+    <p className="sr-only">Use left and right arrow keys after focusing the chart to inspect time and GPM values.</p>
+    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#68736d]">{series.map((line, index) => <span key={`${line.kind}-${line.teamId}-${line.playerSlot}`}><i className={`mr-1.5 inline-block size-2 rounded-full ${index % 2 === 0 ? "bg-[#315f4a]" : "bg-[#d36b4f]"}`} />{line.kind === "team" ? labels[line.teamId] ?? `Team ${line.teamId}` : labels[line.playerSlot ?? -1] ?? `Player ${line.playerSlot}`}</span>)}</div>
+  </div>;
+}
+
+function formatChartTime(seconds: number): string { return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`; }
 
 function TeamScore({ name, side, score, winner }: { name: string; side: string; score: number | null; winner: boolean }) {
   return <div className="min-w-0">

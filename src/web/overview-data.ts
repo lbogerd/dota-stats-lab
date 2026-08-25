@@ -1,17 +1,25 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { MatchListItem, MatchOverview } from "../server/overview.js";
-import { getMatchOverviewFn, listMatchOverviewsFn } from "./functions.js";
+import type { MatchGpm } from "../server/gpm.js";
+import { getMatchGpmFn, getMatchOverviewFn, listMatchOverviewsFn } from "./functions.js";
 
 export type { MatchListItem, MatchOverview };
+export type { MatchGpm };
 
 export const overviewQueryKeys = {
   matches: ["match-overviews"] as const,
   match: (matchId: string) => ["match-overviews", matchId] as const,
+  gpm: (matchId: string, windowSeconds: number, outputStepSeconds: number) => ["match-gpm", matchId, windowSeconds, outputStepSeconds] as const,
 };
 
 export const matchOverviewsQuery = () => queryOptions({
   queryKey: overviewQueryKeys.matches,
   queryFn: (): Promise<MatchListItem[]> => listMatchOverviewsFn(),
+});
+
+export const matchGpmQuery = (matchId: string, windowSeconds: number, outputStepSeconds = 1) => queryOptions({
+  queryKey: overviewQueryKeys.gpm(matchId, windowSeconds, outputStepSeconds),
+  queryFn: (): Promise<MatchGpm> => getMatchGpmFn({ data: { matchId, windowSeconds, outputStepSeconds } }),
 });
 
 export const matchOverviewQuery = (matchId: string) => queryOptions({
