@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { isValidMatchId } from "../lib/match-id.js";
-import { getMatchDetail, listMatches } from "../server/catalog.js";
+import { getCatalogStats, getMatchDetail, listMatches } from "../server/catalog.js";
 import { ensureIngestionCoordinator } from "../server/ingestion-runtime.js";
 import {
   createSavedQueryStore,
@@ -46,6 +46,9 @@ const browserSqlInputSchema = z.object({
 
 export const listMatchesFn = createServerFn({ method: "GET" })
   .handler(() => listMatches());
+
+export const getCatalogStatsFn = createServerFn({ method: "GET" })
+  .handler(() => getCatalogStats());
 
 export const getMatchDetailFn = createServerFn({ method: "GET" })
   .validator(matchIdInputSchema)

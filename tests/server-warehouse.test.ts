@@ -51,7 +51,7 @@ writerConnection.closeSync();
 writer.closeSync();
 
 const { BrowserSqlError, executeReadOnlySql, withReadOnlyWarehouse } = await import("../src/server/warehouse.js");
-const { getMatchDetail, listMatches } = await import("../src/server/catalog.js");
+const { getCatalogStats, getMatchDetail, listMatches } = await import("../src/server/catalog.js");
 
 test("browser SQL returns normalized JSON-safe values and enforces row limits", async () => {
   const result = await executeReadOnlySql(
@@ -147,6 +147,13 @@ test("catalog lists latest match state with string-safe counts", async () => {
     propertyUpdates: "0", checkpoints: "0", total: "0",
   });
   assert.equal(matches[1]!.errorCode, "unavailable");
+});
+
+test("catalog statistics are independent of list pagination and failed retries", async () => {
+  assert.deepEqual(await getCatalogStats(), {
+    storedMatches: "2",
+    totalRecords: "33",
+  });
 });
 
 test("catalog detail returns acquisitions, extractions, counts, and errors", async () => {
