@@ -1,13 +1,14 @@
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
-import { Archive, Database, FlaskConical, LayoutDashboard, Plus, Search, Settings2, TerminalSquare } from "lucide-react";
+import { Archive, Database, FlaskConical, LayoutDashboard, Plus, Search, Settings2, Shield, TerminalSquare } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-interface NavItem { label: string; to: "/" | "/ingest" | "/matches" | "/queries"; icon: LucideIcon }
+interface NavItem { label: string; to: "/" | "/ingest" | "/matches" | "/heroes" | "/queries"; icon: LucideIcon }
 
 const navItems: NavItem[] = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Ingest", to: "/ingest", icon: Plus },
   { label: "Matches", to: "/matches", icon: Archive },
+  { label: "Heroes", to: "/heroes", icon: Shield },
   { label: "Queries", to: "/queries", icon: TerminalSquare },
 ];
 
@@ -88,7 +89,7 @@ export function AppShell() {
         </main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-[#dfe2d9] bg-[#fbfaf5]/96 px-2 pb-[max(env(safe-area-inset-bottom),0.45rem)] pt-1.5 backdrop-blur-lg lg:hidden" aria-label="Mobile navigation">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#dfe2d9] bg-[#fbfaf5]/96 px-2 pb-[max(env(safe-area-inset-bottom),0.45rem)] pt-1.5 backdrop-blur-lg lg:hidden" aria-label="Mobile navigation">
         {navItems.map(({ label, to, icon: Icon }) => (
           <Link key={to} to={to} activeOptions={{ exact: to === "/" }} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[0.62rem] font-semibold text-[#7a837e] [&.active]:text-[#315f4a]">
             <span className="grid h-7 min-w-10 place-items-center rounded-full transition [.active_&]:bg-[#dfead8]"><Icon size={19} strokeWidth={1.9} /></span>

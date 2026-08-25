@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HealthRouteImport } from './routes/health'
+import { Route as HeroesRouteImport } from './routes/heroes'
 import { Route as IngestRouteImport } from './routes/ingest'
 import { Route as MatchesRouteImport } from './routes/matches'
 import { Route as QueriesRouteImport } from './routes/queries'
@@ -27,6 +28,11 @@ const IndexRoute = IndexRouteImport.update({
 const HealthRoute = HealthRouteImport.update({
   id: '/health',
   path: '/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HeroesRoute = HeroesRouteImport.update({
+  id: '/heroes',
+  path: '/heroes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IngestRoute = IngestRouteImport.update({
@@ -68,6 +74,7 @@ const QueriesQueryNameRoute = QueriesQueryNameRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
+  '/heroes': typeof HeroesRoute
   '/ingest': typeof IngestRoute
   '/matches': typeof MatchesRouteWithChildren
   '/queries': typeof QueriesRouteWithChildren
@@ -79,6 +86,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
+  '/heroes': typeof HeroesRoute
   '/ingest': typeof IngestRoute
   '/matches/$matchId': typeof MatchesMatchIdRoute
   '/queries/$queryName': typeof QueriesQueryNameRoute
@@ -89,6 +97,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/health': typeof HealthRoute
+  '/heroes': typeof HeroesRoute
   '/ingest': typeof IngestRoute
   '/matches': typeof MatchesRouteWithChildren
   '/queries': typeof QueriesRouteWithChildren
@@ -102,6 +111,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/health'
+    | '/heroes'
     | '/ingest'
     | '/matches'
     | '/queries'
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/health'
+    | '/heroes'
     | '/ingest'
     | '/matches/$matchId'
     | '/queries/$queryName'
@@ -122,6 +133,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/health'
+    | '/heroes'
     | '/ingest'
     | '/matches'
     | '/queries'
@@ -134,6 +146,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HealthRoute: typeof HealthRoute
+  HeroesRoute: typeof HeroesRoute
   IngestRoute: typeof IngestRoute
   MatchesRoute: typeof MatchesRouteWithChildren
   QueriesRoute: typeof QueriesRouteWithChildren
@@ -153,6 +166,13 @@ declare module '@tanstack/react-router' {
       path: '/health'
       fullPath: '/health'
       preLoaderRoute: typeof HealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/heroes': {
+      id: '/heroes'
+      path: '/heroes'
+      fullPath: '/heroes'
+      preLoaderRoute: typeof HeroesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ingest': {
@@ -236,6 +256,7 @@ const QueriesRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
+  HeroesRoute: HeroesRoute,
   IngestRoute: IngestRoute,
   MatchesRoute: MatchesRouteWithChildren,
   QueriesRoute: QueriesRouteWithChildren,

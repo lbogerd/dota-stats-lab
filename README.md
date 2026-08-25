@@ -101,7 +101,7 @@ The profile applies Clarity runner filters before generic message/entity handlin
 
 | Source | Permanent representation | Why it is retained |
 |---|---|---|
-| `CMsgDOTAMatch` | complete JSON plus typed `analysis.matches`, `analysis.players`, and `analysis.player_items` | authoritative final overview and scoreboard |
+| `CMsgDOTAMatch` | complete JSON plus typed `analysis.matches`, `analysis.players`, `analysis.player_items`, and `analysis.hero_draft_events` | authoritative final overview, scoreboard, and draft facts |
 | `CDOTAMatchMetadataFile` | complete JSON plus typed `analysis.team_time_series` | graphs, inventory/ability snapshots, wards, support statistics, and other future analyses |
 | `CMsgDOTACombatLogEntry` | typed `raw.combat_events` rows | every semantic field exposed by Clarity's combat-log API: combat, economy, levels, runes, wards, modifiers, visibility, abilities, objectives, and locations |
 | `CDOTA_DataRadiant` + `CDOTA_DataDire` + `CDOTAGamerulesProxy` | targeted entity/property staging plus typed `analysis.player_gold_events` | pause-safe cumulative earned-gold changes used for rolling player and team GPM |
@@ -130,6 +130,9 @@ SELECT * FROM analysis.match_summary(8955653541);
 
 -- Final player scoreboard.
 SELECT * FROM analysis.match_players(8955653541);
+
+-- Hero picks, bans, results, rates, and average GPM/XPM.
+SELECT * FROM analysis.hero_stats();
 
 -- Team totals calculated by DuckDB.
 SELECT * FROM analysis.match_team_totals(8955653541);
@@ -162,7 +165,11 @@ Run these queries with `./dota sql`. The browser editor accepts one bounded, rea
 
 ## Website
 
-`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, and rolling GPM. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Its exact values can be inspected with pointer input or the keyboard. Older extractions retain a clear unavailable state instead of using an approximation. Tables use clear headers and captions. On a phone, tables become statistic cards. The site has clear loading, empty, missing-data, and error states. Keyboard focus is visible, and winner text does not depend on color.
+`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, and rolling GPM. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Its exact values can be inspected with pointer input or the keyboard. Older extractions retain a clear unavailable state instead of using an approximation.
+
+`/heroes` summarizes every hero picked or validly banned in matches that have both a normalized match row and a latest successful extraction. Picks and bans are distinct match counts; their rates use the number of matches in that fixed scope. Wins and losses use only picks with a known winner, while average GPM and XPM use the available player values. Missing averages and undecided win/loss rates remain `Unknown`. Existing stored match documents backfill the normalized draft table during migration, so ban statistics do not require replay re-extraction.
+
+Tables use clear headers and captions. On a phone, tables become statistic cards. The site has clear loading, empty, missing-data, and error states. Keyboard focus is visible, and winner text does not depend on color.
 
 Hero and item images are served from Valve's public Steam CDN using Dota 2 asset paths. Dota and Dota 2 are Valve trademarks; this independent learning project is not affiliated with or endorsed by Valve. The local ID/name maps are project-authored compatibility data and unknown/new IDs deliberately fall back to text rather than a broken image.
 

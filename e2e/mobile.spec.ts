@@ -121,3 +121,32 @@ test("mobile user can open a real match overview", async ({ page }) => {
   const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
   expect(bodyWidth).toBeLessThanOrEqual(viewportWidth);
 });
+
+test("mobile user can read the hero overview", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("link", { name: "Heroes" }).last().click();
+
+  await expect(page).toHaveURL(/\/heroes$/);
+  await expect(page.getByRole("heading", { name: "Hero overview" })).toBeVisible();
+  await expect(page.getByText(/Metric scope: [1-9][0-9,]* matches?/)).toBeVisible();
+
+  const firstHero = page.getByRole("article").first();
+  await expect(firstHero, "ingest at least one replay before running browser tests").toBeVisible();
+  for (const metric of [
+    "Average GPM",
+    "Average XPM",
+    "Wins-Losses",
+    "Win-Loss rate",
+    "Picks and pick rate",
+    "Bans and ban rate",
+  ]) {
+    await expect(firstHero.getByText(metric, { exact: true })).toBeVisible();
+  }
+
+  const sizes = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    body: document.body.scrollWidth,
+    document: document.documentElement.scrollWidth,
+  }));
+  expect(Math.max(sizes.body, sizes.document)).toBeLessThanOrEqual(sizes.viewport);
+});
