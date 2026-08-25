@@ -32,6 +32,34 @@ DOTA_REPLAY_SOURCE=/absolute/path/replay.dem.bz2 ./dota ingest MATCH_ID
 DOTA_REPLAY_SOURCE=https://example/replay.dem.bz2 ./dota ingest MATCH_ID
 ```
 
+### TI 2026 replay archive on this host
+
+All 147 compressed TI 2026 replays are preserved outside this Git checkout at
+`/home/xub/dota-stats-archives/ti2026`. The archive includes `matches.csv`, the
+replays and acquisition metadata under `matches/`, per-match logs, and a
+resumable bulk-import helper. It uses the local files through
+`DOTA_REPLAY_SOURCE`, so restoration does not depend on the replay URLs or the
+Docker cache:
+
+```sh
+/home/xub/dota-stats-archives/ti2026/import-all.sh
+```
+
+The helper defaults to two concurrent parser jobs. Override the checkout or
+reduce concurrency when necessary:
+
+```sh
+DOTA_STATS_LAB_REPO=/path/to/dota-stats-lab TI2026_IMPORT_JOBS=1 \
+  /home/xub/dota-stats-archives/ti2026/import-all.sh
+```
+
+Rerunning it is safe: the extraction identity skips exact successful imports,
+while an exporter-version bump creates a new extraction. The archive files were
+initially hard-linked from the Docker replay volume to avoid another 23 GiB of
+disk use. Removing the Docker volume does not remove the archive names, but the
+replay files must be treated as immutable because in-place edits would affect
+both links. See the archive's own `README.md` for the same recovery instructions.
+
 The first successful acquisition is cached with its size, SHA-256 checksum, source, and timestamp. Every cache hit checks the metadata, size, checksum, and file format again. A download stays in a temporary file until validation succeeds. Temporary network errors use a limited number of retries. This also applies to HTTP 408, 425, 429, and 5xx responses. The downloader honors a bounded `Retry-After` value and reports unavailable replays separately.
 
 ## One-command workflows
