@@ -106,16 +106,19 @@ SELECT sample_index, team_id, net_worth, net_worth_advantage
 FROM analysis.match_net_worth(8955653541)
 ORDER BY sample_index, team_id;
 
--- Explore the entire combat timeline retained from Clarity.
+-- Explore the actual-game combat timeline retained from Clarity.
 SELECT event_type, count(*) AS events, sum(value) AS total_value
-FROM raw.combat_events
-WHERE extraction_id = (
+FROM raw.combat_events AS event
+WHERE event.extraction_id = (
   SELECT extraction_id FROM analysis.latest_successful_extractions
   WHERE match_id = 8955653541
 )
+AND analysis.is_actual_game(event.extraction_id, event.sequence)
 GROUP BY event_type
 ORDER BY events DESC;
 ```
+
+The actual-game filter includes pre-game map activity from the pre-game state onward, as well as the complete match, and excludes post-game events.
 
 Run these queries with `./dota sql`. The browser editor accepts one bounded, read-only `SELECT`. It rejects file access, extensions, attachments, copies, configuration changes, and data changes.
 
