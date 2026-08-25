@@ -22,9 +22,11 @@ The default corpus is:
 For every replay, the command performs one warm-up and three measured
 ingestions. The warm-up is not measured. Every ingestion gets a new staging
 tree and a new DuckDB file. Download time is not measured. A disposable web
-container serves the final normal-match warehouse on loopback. The benchmark
-sends one warm overview request and 30 measured overview requests. It also
-runs one browser acknowledgement probe. Benchmark containers do not join or
+containers serve the final normal- and near-hour-match warehouses on loopback.
+For each, the benchmark sends one warm overview request and 30 measured
+overview requests, and measures mobile browser rendering through the granular
+GPM ready state. It also runs one browser acknowledgement probe against the
+match selected by `BENCHMARK_HTTP_MATCH_ID`. Benchmark containers do not join or
 change the deployed Compose application.
 
 Results are written beneath `benchmark-results/TIMESTAMP/` as raw JSONL,
@@ -58,7 +60,14 @@ BENCHMARK_OUTPUT_DIR=/tmp/dota-results \
 
 `BENCHMARK_RUNS` can change the measured-run count, but acceptance reports
 should retain at least three. `BENCHMARK_HTTP_MATCH_ID` selects which final
-measured warehouse supplies the HTTP probes. Image names can be overridden
+measured warehouse supplies the ingestion acknowledgement probe; normal and
+near-hour warehouses always supply overview and browser-render probes when HTTP
+measurement is enabled. `BENCHMARK_GPM_WINDOW_SECONDS` selects one of the six
+supported rolling windows and defaults to 60. `BENCHMARK_GPM_WARM_SAMPLES`
+defaults to five query calls, and `BENCHMARK_BROWSER_RENDER_SAMPLES` defaults
+to three fresh mobile navigations. `BENCHMARK_GPM_MAX_ROUNDING_DIFFERENCE`
+defaults to 1 GPM and is the acceptance tolerance for the final cumulative-gold
+comparison. Image names can be overridden
 with `BENCHMARK_PARSER_IMAGE`, `BENCHMARK_APP_IMAGE`,
 `BENCHMARK_WEB_IMAGE`, and `BENCHMARK_E2E_IMAGE`.
 
@@ -80,8 +89,30 @@ uses Docker directly when the current user can access it and otherwise uses
 - Peak RSS is the largest sum of process RSS observed with `docker top` for
   either ingestion container, sampled every 200 ms.
 - Row counts include both exported staging rows and rows retained in DuckDB.
+- Gold-event rows count the typed `analysis.player_gold_events` facts retained
+  for the selected extraction.
+- Warehouse bytes are the exact file size after loading one replay into its
+  fresh DuckDB database and before query probes run.
+- Cold rolling GPM latency is the first materialized macro query on a new
+  read-only DuckDB connection. Warm latency is the median of five later queries
+  on that connection.
+- GPM response bytes are the UTF-8 JSON size of the grouped server response for
+  a one-second output step. The rolling window defaults to 60 seconds.
+- Matches at least as long as the selected window must produce ten non-empty
+  player series, two non-empty team series, and five players per team. The
+  benchmark fails instead of timing an empty or incomplete result.
+- The Phase-1 final-GPM check subtracts each player's last cumulative value at
+  or before game time zero from the last stored cumulative earned-gold value,
+  divides that earned gold over match duration, rounds the result to the same
+  integer precision as the scoreboard, and compares it to final `gold_per_min`.
+  All ten players must compare within the configured 1 GPM rounding tolerance;
+  the report includes the maximum difference.
 - Overview latency is one unmeasured warm request followed by 30 sequential
   loopback requests. The report uses the nearest-rank p95.
+- Browser render latency starts immediately before a fresh 390 by 844 browser
+  navigation and stops when either the granular GPM graph or its explicit
+  unavailable state is visible. Three samples are collected for the normal and
+  near-hour fixtures, and the report uses nearest-rank p95.
 - Acknowledgement latency starts when the browser activates the ingestion
   button and stops when the queued or active job is visibly confirmed.
 
@@ -95,6 +126,9 @@ uses Docker directly when the current user can access it and otherwise uses
 - The acknowledgement probe is a single end-to-end browser observation. It is
   intentionally not repeated because each submission creates a job, although
   only the disposable benchmark job directory is affected.
+- Browser render time includes navigation, server queries, React rendering, and
+  browser layout; it is an end-to-end readiness measurement rather than an
+  isolated JavaScript render-duration profile.
 - The large fixture is under 60 minutes but is materially larger than the short
   fixture. Replace it with a longer replay when one becomes available.
 - Image builds are outside measured ingestion time. BuildKit cache state does

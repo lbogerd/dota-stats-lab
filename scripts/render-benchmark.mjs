@@ -5,6 +5,7 @@ if (!inputFile || !outputFile) throw new Error("Usage: render-benchmark.mjs RESU
 
 const report = JSON.parse(await readFile(inputFile, "utf8"));
 const groups = Map.groupBy(report.runs.filter((run) => run.kind === "measured"), (run) => run.label);
+const gpmWindowSeconds = report.configuration?.gpmWindowSeconds ?? 60;
 const lines = [
   "# Dota replay ingestion benchmark",
   "",
@@ -35,6 +36,20 @@ for (const [label, runs] of groups) {
 
 lines.push(
   "",
+  "## Granular GPM measurements",
+  "",
+  "| Replay | Match | Gold events | Warehouse | Cold GPM | Warm GPM | 1s response | Max final GPM diff | Browser render p95 |",
+  "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+);
+
+for (const [label, runs] of groups) {
+  const first = runs[0];
+  const browserRender = runs.map((run) => run.http?.browserRender).find((measurement) => measurement?.available);
+  lines.push(`| ${label} | ${first.matchId} | ${formatOptionalInteger(medianOptional(runs, "goldEventRows"))} | ${formatOptionalBytes(medianOptional(runs, "warehouseBytes"))} | ${formatOptionalMilliseconds(medianNested(runs, "gpm", "coldMs"))} | ${formatOptionalMilliseconds(medianNested(runs, "gpm", "warmMedianMs"))} | ${formatOptionalResponseBytes(medianNested(runs, "gpm", "responseBytes"))} | ${formatOptionalGpmDifference(medianDeep(runs, ["gpm", "validation", "goldComparison", "maxGpmDifference"]))} | ${browserRender ? `${browserRender.p95Ms.toFixed(2)} ms` : "not measured"} |`);
+}
+
+lines.push(
+  "",
   "## Measurement boundaries and limitations",
   "",
   "- Replay download time is excluded; every run mounts an existing cached replay read-only.",
@@ -44,6 +59,12 @@ lines.push(
   "- Complete time is parser-container wall time plus loader-container wall time. Report generation and HTTP probes are excluded.",
   "- Peak RSS is the largest sum of process RSS observed with `docker top` in either ingestion container at 200 ms intervals; a narrow spike between samples may be missed.",
   "- The overview result uses one unmeasured warm request followed by 30 sequential loopback HTTP requests.",
+  "- Warehouse size is the exact DuckDB file size after loading one match into a fresh database and before running GPM probes.",
+  "- Cold GPM is the first rolling-macro query on a new read-only DuckDB connection. Warm GPM is the median of repeated materialized queries on that same connection.",
+  `- The GPM response size is the UTF-8 JSON byte length of the grouped ${gpmWindowSeconds}-second-window response at a one-second output step.`,
+  "- The real-replay validation requires ten non-empty player series, two non-empty complete-team series, and five players per team when the match is at least as long as the selected window.",
+  "- Final GPM validation subtracts each player's last value at or before game time zero from the last stored cumulative earned-gold value, normalizes it per minute over match duration, and compares that result with the final scoreboard GPM.",
+  "- Browser render time measures a fresh 390 by 844 navigation until the granular GPM graph or explicit unavailable state is visible. It is collected for the normal and near-hour fixtures.",
   "- Acknowledgement is one browser measurement from activating the ingestion button until the queued or active job is visible. It mutates only the disposable benchmark job directory.",
   "- Container CPU and memory limits are part of the benchmark configuration recorded in the JSON report.",
   "",
@@ -58,12 +79,48 @@ function median(runs, key) {
   return values[Math.floor(values.length / 2)];
 }
 
+function medianOptional(runs, key) {
+  const values = runs.map((run) => run[key]).filter((value) => value != null).map(Number).sort((a, b) => a - b);
+  return values.length === 0 ? null : values[Math.floor(values.length / 2)];
+}
+
+function medianNested(runs, objectKey, key) {
+  const values = runs.map((run) => run[objectKey]?.[key]).filter((value) => value != null).map(Number).sort((a, b) => a - b);
+  return values.length === 0 ? null : values[Math.floor(values.length / 2)];
+}
+
+function medianDeep(runs, path) {
+  const values = runs.map((run) => path.reduce((value, key) => value?.[key], run))
+    .filter((value) => value != null).map(Number).sort((a, b) => a - b);
+  return values.length === 0 ? null : values[Math.floor(values.length / 2)];
+}
+
 function formatSeconds(milliseconds) {
   return `${(Number(milliseconds) / 1_000).toFixed(2)} s`;
 }
 
 function formatMiB(bytes) {
   return `${(Number(bytes) / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function formatOptionalBytes(bytes) {
+  return bytes == null ? "not measured" : formatMiB(bytes);
+}
+
+function formatOptionalResponseBytes(bytes) {
+  return bytes == null ? "not measured" : `${(Number(bytes) / 1024).toFixed(1)} KiB`;
+}
+
+function formatOptionalInteger(value) {
+  return value == null ? "not measured" : formatInteger(value);
+}
+
+function formatOptionalMilliseconds(value) {
+  return value == null ? "not measured" : `${Number(value).toFixed(2)} ms`;
+}
+
+function formatOptionalGpmDifference(value) {
+  return value == null ? "not measured" : `${Number(value).toFixed(2)} GPM`;
 }
 
 function formatGiB(bytes) {
