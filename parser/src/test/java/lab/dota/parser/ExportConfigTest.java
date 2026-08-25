@@ -25,4 +25,10 @@ class ExportConfigTest {
         assertThrows(IllegalArgumentException.class,
                 () -> ExportConfig.fromEnvironment(Map.of("PARSER_MAX_RECORDS", "0")));
     }
+
+    @Test void describesOnlyTheExplicitEntityClassesUsedByTheProfile() {
+        ExportConfig config = ExportConfig.fromEnvironment(Map.of());
+        assertEquals(java.util.List.of("CDOTA_PlayerResource", "CDOTAGamerulesProxy"),
+                config.asMap().get("entityClassPatterns"));
+    }
 }

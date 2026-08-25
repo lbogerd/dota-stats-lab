@@ -3,14 +3,21 @@ package lab.dota.parser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import skadistats.clarity.model.CombatLogEntry;
+import skadistats.clarity.model.Entity;
+import skadistats.clarity.model.FieldPath;
+import skadistats.clarity.processor.entities.OnEntityCreated;
+import skadistats.clarity.processor.entities.OnEntityUpdated;
 import skadistats.clarity.processor.gameevents.OnCombatLogEntry;
 import skadistats.clarity.processor.reader.OnMessage;
+import skadistats.clarity.processor.reader.OnTickEnd;
 import skadistats.clarity.processor.runner.Context;
 import skadistats.clarity.wire.dota.s2.proto.DOTAS2GcMessagesCommon;
 import skadistats.clarity.wire.dota.s2.proto.DOTAS2MatchMetadata;
+import skadistats.clarity.wire.shared.common.proto.CommonNetworkBaseTypes;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -26,7 +33,12 @@ final class ReplayExporter {
     private DOTAS2MatchMetadata.CDOTAMatchMetadataFile metadata;
     private int matchTick;
     private int metadataTick;
-    private long combatSequence;
+    private long timelineSequence;
+    private long entitySequence;
+    private int demoTick;
+    private final Map<Long, String> playerResourceIds = new HashMap<>();
+    private final GameClock gameClock = new GameClock();
+    private final GoldTimeline goldTimeline = new GoldTimeline();
 
     ReplayExporter(String extractionId, NdjsonSet output, ExportConfig config, Instant startedAt) {
         this.extractionId = extractionId;
@@ -36,14 +48,14 @@ final class ReplayExporter {
 
     @OnMessage(DOTAS2GcMessagesCommon.CMsgDOTAMatch.class)
     public void onMatch(Context context, DOTAS2GcMessagesCommon.CMsgDOTAMatch message) {
-        touch();
+        touch(context);
         match = message;
         matchTick = context.getTick();
     }
 
     @OnMessage(DOTAS2MatchMetadata.CDOTAMatchMetadataFile.class)
     public void onMetadata(Context context, DOTAS2MatchMetadata.CDOTAMatchMetadataFile message) {
-        touch();
+        touch(context);
         metadata = message;
         metadataTick = context.getTick();
     }
@@ -59,7 +71,7 @@ final class ReplayExporter {
         touch();
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("extractionId", extractionId);
-        row.put("sequence", ++combatSequence);
+        row.put("sequence", ++timelineSequence);
         row.put("gameTime", event.hasTimestamp() ? event.getTimestamp() : null);
         row.put("rawTime", event.hasTimestampRaw() ? event.getTimestampRaw() : null);
         row.put("eventType", event.hasType() ? event.getType().name() : null);
@@ -142,13 +154,111 @@ final class ReplayExporter {
         output.write("combatEvents", row);
     }
 
+    @OnMessage(CommonNetworkBaseTypes.CNETMsg_Tick.class)
+    public void onNetworkTick(Context context, CommonNetworkBaseTypes.CNETMsg_Tick message) {
+        touch(context);
+        gameClock.observeTick(message.getTick(), context.getMillisPerTick());
+    }
+
+    @OnEntityCreated(classPattern = "CDOTAGamerulesProxy")
+    public void onGameRulesCreated(Context context, Entity entity) {
+        touch(context);
+        observeGameRulesState(entity);
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTAGamerulesProxy")
+    public void onGameRulesUpdated(Context context, Entity entity, FieldPath[] paths, int count) {
+        touch(context);
+        for (int i = 0; i < count; i++) observeGameRulesProperty(entity, paths[i]);
+        gameClock.refresh();
+    }
+
+    @OnEntityCreated(classPattern = "CDOTA_PlayerResource")
+    public void onPlayerResourceCreated(Context context, Entity entity) throws IOException {
+        touch(context);
+        String instanceId = ensurePlayerResource(entity);
+        observePlayerResourceState(instanceId, entity);
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTA_PlayerResource")
+    public void onPlayerResourceUpdated(Context context, Entity entity, FieldPath[] paths, int count)
+            throws IOException {
+        touch(context);
+        String instanceId = ensurePlayerResource(entity);
+        for (int i = 0; i < count; i++) {
+            String path = entity.getDtClass().getNameForFieldPath(paths[i]);
+            goldTimeline.observe(instanceId, path, entity.getPropertyForFieldPath(paths[i]));
+        }
+    }
+
+    @OnTickEnd
+    public void onTickEnd(Context context, boolean synthetic) throws IOException {
+        touch(context);
+        for (GoldTimeline.GoldUpdate update : goldTimeline.finishTick(gameClock.gameTime())) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("extractionId", extractionId);
+            row.put("sequence", ++timelineSequence);
+            row.put("entityInstanceId", update.entityInstanceId());
+            row.put("propertyPath", update.propertyPath());
+            row.put("valueType", "Long");
+            row.put("value", update.totalGold());
+            row.put("demoTick", demoTick);
+            row.put("netTick", null);
+            row.put("gameTime", update.gameTime());
+            output.write("propertyUpdates", row);
+        }
+    }
+
+    private void observeGameRulesState(Entity entity) {
+        if (entity.getState() == null) return;
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) observeGameRulesProperty(entity, iterator.next());
+        gameClock.refresh();
+    }
+
+    private void observeGameRulesProperty(Entity entity, FieldPath fieldPath) {
+        String path = entity.getDtClass().getNameForFieldPath(fieldPath);
+        gameClock.observeProperty(path, entity.getPropertyForFieldPath(fieldPath));
+    }
+
+    private void observePlayerResourceState(String instanceId, Entity entity) {
+        if (entity.getState() == null) return;
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) {
+            FieldPath fieldPath = iterator.next();
+            String path = entity.getDtClass().getNameForFieldPath(fieldPath);
+            goldTimeline.observe(instanceId, path, entity.getPropertyForFieldPath(fieldPath));
+        }
+    }
+
+    private String ensurePlayerResource(Entity entity) throws IOException {
+        String existing = playerResourceIds.get(entity.getUid());
+        if (existing != null) return existing;
+        String instanceId = Long.toString(++entitySequence);
+        playerResourceIds.put(entity.getUid(), instanceId);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("extractionId", extractionId);
+        row.put("sequence", entitySequence);
+        row.put("entityInstanceId", instanceId);
+        row.put("entityIndex", entity.getIndex());
+        row.put("serial", entity.getSerial());
+        row.put("handle", entity.getHandle());
+        row.put("classId", entity.getDtClass().getClassId());
+        row.put("className", entity.getDtClass().getDtName());
+        row.put("demoTick", demoTick);
+        row.put("netTick", null);
+        row.put("gameTime", gameClock.gameTime());
+        output.write("entityInstances", row);
+        return instanceId;
+    }
+
     void finish() throws Exception {
         if (match == null) throw new IOException("replay does not contain CMsgDOTAMatch");
         if (metadata == null) throw new IOException("replay does not contain CDOTAMatchMetadataFile");
         writeRecord(1, matchTick, "match_overview", match);
         writeRecord(2, metadataTick, "match_metadata", metadata);
-        log.info("profile={} exported 2 match documents and {} typed combat events",
-                PROFILE, combatSequence);
+        log.info("profile={} exported 2 match documents and {} timeline events",
+                PROFILE, timelineSequence);
     }
 
     private void writeRecord(long sequence, int tick, String category,
@@ -162,7 +272,7 @@ final class ReplayExporter {
         row.put("category", category);
         row.put("recordType", message.getDescriptorForType().getName());
         row.put("payload", ValueEncoder.encodeMessage(message, "", (path, bytes) -> {
-            long blobSequence = 2 + combatSequence + output.totalRecords();
+            long blobSequence = 2 + timelineSequence + output.totalRecords();
             Map<String, Object> blob = new LinkedHashMap<>();
             blob.put("extractionId", extractionId);
             blob.put("sequence", blobSequence);
@@ -181,5 +291,10 @@ final class ReplayExporter {
 
     private void touch() {
         if (Instant.now().isAfter(deadline)) throw new ExportLimitException("parser timeout exceeded");
+    }
+
+    private void touch(Context context) {
+        demoTick = context.getTick();
+        touch();
     }
 }

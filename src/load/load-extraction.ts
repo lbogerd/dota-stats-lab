@@ -110,7 +110,8 @@ async function analysisRowCount(connection: DuckDBConnection, extractionId: stri
        (SELECT count(*) FROM analysis.matches WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.players WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.player_items WHERE extraction_id = $id)
-       + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id) AS rows`,
+       + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id) AS rows`,
     { id: extractionId },
   );
   return Number((result.getRowObjects()[0] as { rows: bigint }).rows);
@@ -558,6 +559,88 @@ async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: 
      WHERE metadata.extraction_id = $id
        AND metadata.record_type = 'CDOTAMatchMetadataFile'
        AND try_cast(json_extract_string(team.value, '$.dota_team') AS INTEGER) IN (2, 3)`,
+    { id: manifest.extractionId },
+  );
+
+  await connection.run(
+    `INSERT INTO analysis.player_gold_events
+     WITH metadata_player_candidates AS MATERIALIZED (
+       SELECT
+         try_cast(json_extract_string(player.value, '$.game_player_id') AS INTEGER)
+           AS game_player_id,
+         try_cast(json_extract_string(player.value, '$.player_slot') AS UINTEGER)
+           AS player_slot,
+         try_cast(json_extract_string(team.value, '$.dota_team') AS INTEGER)
+           AS team_id
+       FROM raw.records AS metadata,
+            json_each(metadata.payload, '$.metadata.teams') AS team,
+            json_each(team.value, '$.players') AS player
+       WHERE metadata.extraction_id = $id
+         AND metadata.record_type = 'CDOTAMatchMetadataFile'
+     ),
+     metadata_players AS MATERIALIZED (
+       -- A repeated game-player ID is ambiguous even when one candidate looks
+       -- usable. Skip it instead of duplicating a gold fact or guessing.
+       SELECT
+         game_player_id,
+         min(player_slot) AS player_slot,
+         min(team_id) AS team_id
+       FROM metadata_player_candidates
+       WHERE game_player_id IS NOT NULL
+         AND game_player_id >= 0
+         AND player_slot IS NOT NULL
+         AND team_id IN (2, 3)
+       GROUP BY game_player_id
+       HAVING count(*) = 1
+     ),
+     gold_updates AS MATERIALIZED (
+       SELECT
+         update.extraction_id,
+         update.sequence,
+         try_cast(
+           regexp_extract(
+             update.property_path,
+             '^m_vecPlayerTeamData\\.([0-9]+)\\.m_iTotalEarnedGold$',
+             1
+           ) AS INTEGER
+         ) AS game_player_id,
+         update.game_time AS game_time_seconds,
+         try_cast(json_extract_string(update.value, '$') AS BIGINT)
+           AS total_gold_earned
+       FROM raw.entity_property_updates AS update
+       JOIN raw.entity_instances AS instance
+         ON instance.extraction_id = update.extraction_id
+        AND instance.entity_instance_id = update.entity_instance_id
+        AND instance.class_name = 'CDOTA_PlayerResource'
+       WHERE update.extraction_id = $id
+         AND regexp_full_match(
+           update.property_path,
+           'm_vecPlayerTeamData\\.[0-9]+\\.m_iTotalEarnedGold'
+         )
+         AND update.game_time IS NOT NULL
+         AND isfinite(update.game_time)
+         AND analysis.is_actual_game(update.extraction_id, update.sequence)
+     )
+     SELECT
+       update.extraction_id,
+       update.sequence,
+       update.game_player_id,
+       player.player_slot,
+       player.team_id,
+       update.game_time_seconds,
+       update.total_gold_earned
+     FROM gold_updates AS update
+     JOIN metadata_players AS player USING (game_player_id)
+     JOIN analysis.players AS roster
+       ON roster.extraction_id = update.extraction_id
+      AND roster.player_slot = player.player_slot
+      AND roster.team_id = player.team_id
+     WHERE update.game_player_id IS NOT NULL
+       AND update.game_player_id >= 0
+       AND update.total_gold_earned >= 0
+       AND player.player_slot IS NOT NULL
+       AND player.team_id IN (2, 3)
+     ORDER BY update.sequence`,
     { id: manifest.extractionId },
   );
 }

@@ -157,6 +157,131 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
   } finally { connection.closeSync(); }
 });
 
+test("loader materializes valid actual-game gold updates using metadata player mappings", async () => {
+  const granularMatchId = 46n;
+  const granularId = "1".repeat(64);
+  const missingMarkerId = "2".repeat(64);
+
+  const granularRows = (id: string, includeStop: boolean): Record<string, string> => {
+    const row = (value: Record<string, unknown>): string => `${JSON.stringify({ extractionId: id, ...value })}\n`;
+    const combatFields = `targetName attackerName damageSourceName inflictorName
+      targetTeam attackerTeam health locationX locationY eventLocation stunDuration
+      slowDuration modifierDuration goldReason xpReason lastHits netWorth gpm xpm
+      attackerHeroLevel targetHeroLevel damageType damageCategory runeType stackCount
+      observerWardsPlaced assistPlayers attackerHero targetHero targetBuilding
+      attackerIllusion targetIllusion healSave longRangeKill targetSourceName valueName
+      modifierElapsedDuration abilityLevel neutralCampType buildingType modifierPurgeAbility
+      modifierPurgeNpc totalUnitDeathCount modifierAbility killEaterEvent unitStatusLabel
+      neutralCampTeam regeneratedHealth trackedStatId modifierPurgedDuration visibleRadiant
+      visibleDire abilityToggleOn abilityToggleOff hiddenModifier ultimateAbility targetSelf
+      invisibilityModifier silenceModifier healFromLifesteal modifierPurged spellEvaded
+      motionControllerModifier rootModifier auraModifier armorDebuffModifier
+      noPhysicalDamageModifier modifierHidden inflictorIsStolenAbility spellGeneratedAttack
+      atNightTime attackerHasScepter willReincarnate usesCharges healFromRegen`.split(/\s+/);
+    const combat = (sequence: number, gameTime: number, value: number): string => row({
+      ...Object.fromEntries(combatFields.map((field) => [field, null])),
+      sequence, gameTime, rawTime: gameTime,
+      eventType: "DOTA_COMBATLOG_GAME_STATE", value,
+    });
+    const update = (
+      sequence: number,
+      gameTime: number,
+      propertyPath: string,
+      value: number,
+      entityInstanceId = "1",
+    ): string => row({
+      sequence, demoTick: sequence, netTick: null, gameTime, entityInstanceId,
+      propertyPath, valueType: "java.lang.Long", value,
+    });
+    const overview = {
+      match_id: granularMatchId.toString(), duration: 60,
+      players: [
+        { player_slot: 0, team_number: "DOTA_GC_TEAM_GOOD_GUYS", team_slot: 0 },
+        { player_slot: 128, team_number: "DOTA_GC_TEAM_BAD_GUYS", team_slot: 0 },
+      ],
+    };
+    const metadata = {
+      version: 1,
+      metadata: { teams: [
+        { dota_team: 2, players: [
+          { game_player_id: 7, player_slot: 0 },
+          { game_player_id: 8, player_slot: 1 },
+        ], graph_net_worth: [] },
+        { dota_team: 3, players: [
+          { game_player_id: 1, player_slot: 128 },
+          { game_player_id: 8, player_slot: 129 },
+        ], graph_net_worth: [] },
+      ] },
+    };
+    const goldPath = (gamePlayerId: string): string =>
+      `m_vecPlayerTeamData.${gamePlayerId}.m_iTotalEarnedGold`;
+
+    return {
+      "records.ndjson": [
+        row({ sequence: 1, demoTick: 1, netTick: null, gameTime: 60, category: "match_overview", recordType: "CMsgDOTAMatch", payload: overview }),
+        row({ sequence: 2, demoTick: 2, netTick: null, gameTime: 60, category: "match_metadata", recordType: "CDOTAMatchMetadataFile", payload: metadata }),
+      ].join(""),
+      "combat_events.ndjson": [
+        combat(20, -5, 4),
+        includeStop ? combat(100, 60, 6) : "",
+      ].join(""),
+      "blobs.ndjson": "",
+      "entity_instances.ndjson": [
+        row({ sequence: 1, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "1", entityIndex: 1, serial: 1, handle: 16385, classId: 1, className: "CDOTA_PlayerResource" }),
+        row({ sequence: 2, demoTick: 1, netTick: null, gameTime: -5, entityInstanceId: "2", entityIndex: 2, serial: 1, handle: 16386, classId: 2, className: "CTest" }),
+      ].join(""),
+      "entity_events.ndjson": "",
+      "property_updates.ndjson": [
+        update(15, -10, goldPath("0007"), 50),
+        update(21, -5, goldPath("0007"), 100),
+        update(22, -5, goldPath("0007"), 110),
+        update(30, 0, goldPath("0007"), 120),
+        update(40, 10, goldPath("0008"), 130),
+        update(41, 10, "m_vecPlayerTeamData.0007.m_iTotalEarnedXP", 140),
+        update(42, 10, goldPath("0001"), 200),
+        update(43, 10, goldPath("0007"), 150, "2"),
+        update(99, 59, goldPath("0007"), -1),
+        update(100, 60, goldPath("0007"), 160),
+        update(101, 61, goldPath("0007"), 170),
+      ].join(""),
+      "checkpoints.ndjson": "",
+    };
+  };
+
+  assert.equal((await loadClaimedExtraction(
+    await stage(granularId, granularRows(granularId, true), granularMatchId),
+  )).status, "loaded");
+
+  assert.equal((await loadClaimedExtraction(
+    await stage(missingMarkerId, granularRows(missingMarkerId, false), granularMatchId),
+  )).status, "loaded");
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const events = await connection.runAndReadAll(
+      `SELECT sequence::INTEGER AS sequence, game_player_id,
+              player_slot, team_id, game_time_seconds, total_gold_earned
+       FROM analysis.player_gold_events
+       WHERE extraction_id = $id
+       ORDER BY sequence`,
+      { id: granularId },
+    );
+    assert.deepEqual(events.getRowObjectsJson(), [
+      { sequence: 21, game_player_id: 7, player_slot: 0, team_id: 2, game_time_seconds: -5, total_gold_earned: "100" },
+      { sequence: 22, game_player_id: 7, player_slot: 0, team_id: 2, game_time_seconds: -5, total_gold_earned: "110" },
+      { sequence: 30, game_player_id: 7, player_slot: 0, team_id: 2, game_time_seconds: 0, total_gold_earned: "120" },
+      { sequence: 42, game_player_id: 1, player_slot: 128, team_id: 3, game_time_seconds: 10, total_gold_earned: "200" },
+    ]);
+
+    const incomplete = await connection.runAndReadAll(
+      "SELECT count(*)::INTEGER AS n FROM analysis.player_gold_events WHERE extraction_id = $id",
+      { id: missingMarkerId },
+    );
+    assert.deepEqual(incomplete.getRowObjectsJson(), [{ n: 0 }]);
+  } finally { connection.closeSync(); }
+});
+
 test("malformed staged JSON rolls back raw data and retains failed staging", async () => {
   const failedId = "c".repeat(64);
   const malformed = Object.fromEntries(Object.keys(goodRows).map((name) => [name, ""])) as Record<string, string>;
