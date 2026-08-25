@@ -47,12 +47,6 @@ export interface SavedQuery {
   updatedAt: string;
 }
 
-export interface SavedQueryDownload {
-  fileName: string;
-  contentType: "text/sql; charset=utf-8";
-  body: string;
-}
-
 export class SavedQueryNotFoundError extends Error {
   constructor(name: string) {
     super(`Saved query '${name}' was not found.`);
@@ -176,17 +170,6 @@ export class SavedQueryStore {
     const renamed = await this.readSafeFile(input.to);
     if (!renamed) throw new SavedQueryNotFoundError(input.to);
     return renamed;
-  }
-
-  async download(name: string): Promise<SavedQueryDownload> {
-    const safeName = savedQueryNameSchema.parse(name);
-    const query = await this.read(safeName);
-    if (!query) throw new SavedQueryNotFoundError(safeName);
-    return {
-      fileName: `${safeName}.sql`,
-      contentType: "text/sql; charset=utf-8",
-      body: query.sql,
-    };
   }
 
   async delete(name: string): Promise<boolean> {

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.apache.commons.compress.compressors.zstandard.ZstdCompressorInputStream;
 import skadistats.clarity.processor.runner.SimpleRunner;
+import skadistats.clarity.processor.runner.RunnerFilters;
 import skadistats.clarity.source.MappedFileSource;
 
 import java.io.IOException;
@@ -80,18 +81,25 @@ public final class Main {
         Path decompressed = null;
         try {
             Path clarityInput = replay;
-            if (replay.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".bz2")) {
+            long preparationStarted = System.nanoTime();
+            if (isCompressed(replay)) {
                 decompressed = Files.createTempFile("dota-replay-", ".dem");
                 decompress(replay, decompressed, config.maxInputBytes());
                 clarityInput = decompressed;
             }
+            long preparationElapsedMs = elapsedMilliseconds(preparationStarted);
+            logPhase(extractionId, "preparation", preparationElapsedMs, 1);
 
             NdjsonSet files = new NdjsonSet(partial, JSON, config.maxOutputBytes(), config.maxRecords());
             ReplayExporter exporter = new ReplayExporter(extractionId, files, config, started);
+            long parsingStarted = System.nanoTime();
             try (files; MappedFileSource source = new MappedFileSource(clarityInput.toString())) {
-                new SimpleRunner(source).runWith(exporter);
+                RunnerFilters filters = new RunnerFilters(messageClass -> false, dtClass -> false);
+                new SimpleRunner(source, filters).runWith(exporter);
                 exporter.finish();
             }
+            long parsingElapsedMs = elapsedMilliseconds(parsingStarted);
+            logPhase(extractionId, "clarity_parse", parsingElapsedMs, files.totalRecords());
 
             Instant completed = Instant.now();
             Map<String, Object> manifest = new LinkedHashMap<>();
@@ -105,6 +113,9 @@ public final class Main {
             manifest.put("startedAt", DateTimeFormatter.ISO_INSTANT.format(started));
             manifest.put("completedAt", DateTimeFormatter.ISO_INSTANT.format(completed));
             manifest.put("elapsedMs", java.time.Duration.between(started, completed).toMillis());
+            manifest.put("preparationElapsedMs", preparationElapsedMs);
+            manifest.put("parsingElapsedMs", parsingElapsedMs);
+            manifest.put("profile", ReplayExporter.PROFILE);
             manifest.put("files", files.manifestFiles());
             manifest.put("counts", files.counts());
             Map<String, Object> acquisition = acquisitionData(replay.getParent());
@@ -176,6 +187,23 @@ public final class Main {
         }
     }
 
+    private static boolean isCompressed(Path replay) throws IOException {
+        try (InputStream input = Files.newInputStream(replay)) {
+            byte[] magic = input.readNBytes(4);
+            return (magic.length >= 3 && magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h')
+                    || (magic.length == 4 && (magic[0] & 0xff) == 0x28 && (magic[1] & 0xff) == 0xb5
+                    && (magic[2] & 0xff) == 0x2f && (magic[3] & 0xff) == 0xfd);
+        }
+    }
+
+    private static long elapsedMilliseconds(long startedNanos) {
+        return Math.max(0, (System.nanoTime() - startedNanos) / 1_000_000L);
+    }
+
+    private static void logPhase(String extractionId, String phase, long elapsedMs, long rows) {
+        System.err.printf("ingestion=%s phase=%s elapsed_ms=%d rows=%d%n", extractionId, phase, elapsedMs, rows);
+    }
+
     private static InputStream compressionStream(BufferedInputStream input) throws IOException {
         input.mark(4);
         byte[] magic = input.readNBytes(4);
@@ -225,7 +253,7 @@ public final class Main {
             if (matchId == null || matchId.isBlank()) throw new IllegalArgumentException("MATCH_ID is required");
             validateMatchId(matchId);
             Path replay = null;
-            Path staging = Path.of("/work/staging");
+            Path staging = Path.of(env.getOrDefault("STAGING_ROOT", "/work/staging"));
             String sha = null;
             while (index < args.length) {
                 String option = args[index++];

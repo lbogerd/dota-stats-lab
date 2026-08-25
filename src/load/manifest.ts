@@ -5,6 +5,7 @@ import path from "node:path";
 
 export const stagedFiles = {
   records: "records.ndjson",
+  combatEvents: "combat_events.ndjson",
   blobs: "blobs.ndjson",
   entityInstances: "entity_instances.ndjson",
   entityEvents: "entity_events.ndjson",
@@ -29,6 +30,9 @@ export type Manifest = {
   startedAt: string;
   completedAt: string;
   elapsedMs: number;
+  preparationElapsedMs?: number;
+  parsingElapsedMs?: number;
+  profile?: string;
   files: Record<keyof typeof stagedFiles, FileEntry>;
   counts: Record<string, number>;
   acquisition?: Record<string, unknown>;

@@ -1,29 +1,29 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, ChevronRight, Clock3, Database, FileCode2, Layers3, Plus, TerminalSquare, TriangleAlert } from "lucide-react";
-import { formatCount, formatRelative, jobsQuery, matchesQuery, savedQueriesQuery } from "../web/data";
+import { catalogStatsQuery, formatCount, formatRelative, jobsQuery, matchesQuery, savedQueriesQuery } from "../web/data";
 import { PageHeading, StatusBadge } from "../web/ui";
 
 export const Route = createFileRoute("/")({
-  loader: async ({ context }) => Promise.all([context.queryClient.ensureQueryData(jobsQuery()), context.queryClient.ensureQueryData(matchesQuery()), context.queryClient.ensureQueryData(savedQueriesQuery())]),
+  loader: async ({ context }) => Promise.all([context.queryClient.ensureQueryData(jobsQuery()), context.queryClient.ensureQueryData(matchesQuery()), context.queryClient.ensureQueryData(catalogStatsQuery()), context.queryClient.ensureQueryData(savedQueriesQuery())]),
   component: Dashboard,
 });
 
 function Dashboard() {
   const { data: jobs } = useSuspenseQuery(jobsQuery());
   const { data: matches } = useSuspenseQuery(matchesQuery());
+  const { data: catalogStats } = useSuspenseQuery(catalogStatsQuery());
   const { data: savedQueries } = useSuspenseQuery(savedQueriesQuery());
   const active = jobs.find((job) => !["succeeded", "failed"].includes(job.status));
   const recent = jobs.slice(0, 3);
-  const totalRecords = matches.reduce((sum, match) => sum + Number(match.counts.total), 0);
   return (
     <>
       <PageHeading eyebrow="Replay workspace" title="Good afternoon." description="Your local Dota replay warehouse is healthy and ready to explore." action={<Link to="/ingest" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#315f4a] px-4 text-sm font-semibold text-white transition hover:bg-[#234636]"><Plus size={17} /> Ingest match</Link>} />
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
-          { label: "Stored matches", value: matches.length.toString().padStart(2, "0"), note: "Catalog total", icon: Database },
-          { label: "Total records", value: formatCount(totalRecords), note: "Parser-native", icon: Layers3 },
+          { label: "Stored matches", value: catalogStats.storedMatches.padStart(2, "0"), note: "Catalog total", icon: Database },
+          { label: "Total records", value: formatCount(catalogStats.totalRecords), note: "Parser-native", icon: Layers3 },
           { label: "Saved queries", value: savedQueries.length.toString().padStart(2, "0"), note: "Durable files", icon: FileCode2 },
           { label: "Warehouse", value: "Ready", note: "DuckDB online", icon: TerminalSquare },
         ].map(({ label, value, note, icon: Icon }) => (
@@ -43,7 +43,7 @@ function Dashboard() {
             <div className="mt-7 grid grid-cols-4 gap-1.5" aria-label="Ingestion progress">
               {["Download", "Parse", "Load", "Done"].map((label, index) => { const stage = active.status === "queued" ? 0 : active.status === "fetching" ? 0 : active.status === "parsing" ? 1 : active.status === "loading" ? 2 : 3; return <div key={label}><div className={`h-1.5 rounded-full ${index <= stage ? "bg-[#315f4a]" : "bg-[#e3e5de]"}`} /><p className={`mt-2 text-[0.62rem] font-semibold ${index <= stage ? "text-[#315f4a]" : "text-[#9ca39f]"}`}>{label}</p></div>; })}
             </div>
-            <div className="mt-6 rounded-xl bg-[#eff1e8] px-4 py-3 text-xs leading-5 text-[#68736d]"><span className="font-semibold text-[#35433b]">Parsing entity updates.</span> The Clarity worker is exporting replay events into immutable staging files.</div>
+            <div className="mt-6 rounded-xl bg-[#eff1e8] px-4 py-3 text-xs leading-5 text-[#68736d]"><span className="font-semibold text-[#35433b]">Parsing the replay.</span> The Clarity worker is exporting match, metadata, and combat data into immutable staging files.</div>
           </div> : recent.length > 0 ? <div className="divide-y divide-[#e7e8e2]">
             {recent.map((job) => <div key={job.id} className="flex min-h-[76px] items-center gap-3 px-5 py-3.5 sm:px-6">
               <div className={`grid size-9 shrink-0 place-items-center rounded-xl ${job.status === "succeeded" ? "bg-[#e5ecdf] text-[#315f4a]" : "bg-[#fae3de] text-[#a64638]"}`}>{job.status === "succeeded" ? <CheckCircle2 size={17} /> : <TriangleAlert size={17} />}</div>

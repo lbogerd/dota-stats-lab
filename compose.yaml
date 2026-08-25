@@ -35,6 +35,25 @@ services:
         source: staging
         target: /work/staging
 
+  warehouse-init:
+    build:
+      context: .
+      target: app
+    image: dota-stats-lab-app:local
+    command: ["migrate"]
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - type: volume
+        source: warehouse
+        target: /data/warehouse
+
   web:
     build:
       context: .
@@ -54,6 +73,8 @@ services:
       - "127.0.0.1:3400:3000"
     depends_on:
       staging-init:
+        condition: service_completed_successfully
+      warehouse-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -193,10 +214,11 @@ volumes:
     name: dota-stats-replays
     external: true
   warehouse:
-    name: dota-stats-warehouse
+    name: dota-stats-warehouse-v2
     external: true
   staging:
     name: dota-stats-staging
+    external: true
   queries:
     name: dota-stats-queries
     external: true

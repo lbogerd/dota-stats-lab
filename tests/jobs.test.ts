@@ -16,7 +16,6 @@ const {
   jobDirectory,
   readIngestionRequest,
   readJobStatus,
-  updateJobStatus,
   writeParseResult,
 } = await import("../src/jobs/job-files.js");
 const { IngestionCoordinator } = await import("../src/jobs/coordinator.js");

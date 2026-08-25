@@ -86,6 +86,7 @@ test("SQL catalog excludes non-project schemas and built-in functions", async ()
 });
 
 test("SQL catalog uses the existing locked, read-only warehouse connection", async () => {
+  let queued: ReturnType<typeof getSqlCatalog> | undefined;
   await withReadOnlyWarehouse(async (readOnlyConnection) => {
     const settings = await readOnlyConnection.runAndReadAll(`
       SELECT name, value
@@ -97,6 +98,7 @@ test("SQL catalog uses the existing locked, read-only warehouse connection", asy
       enable_external_access: "false",
       lock_configuration: "true",
     });
-    await assert.rejects(getSqlCatalog(), /Warehouse is in use/);
+    queued = getSqlCatalog();
   });
+  assert.ok((await queued!).schemas.length > 0);
 });

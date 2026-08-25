@@ -1,22 +1,21 @@
 # Dota replay exporter
 
-The exporter builds the Clarity fork pinned by `vendor/clarity` and turns a
-cached replay into immutable NDJSON staging files. `parser-identity.json` at
-the repository root records the upstream Clarity release, exact fork commit,
-and export-format version. Java, TypeScript, tests, and Docker builds all read
-that file instead of declaring their own version strings.
+The exporter builds the Clarity fork in `vendor/clarity`. It turns a cached
+replay into immutable NDJSON staging files. The root `parser-identity.json`
+file records the Clarity release, fork commit, and export format. Java,
+TypeScript, tests, and Docker builds all read that file.
 
-The manifest keeps these concepts separate. `parser.upstreamRelease` describes
-the fork base, `parser.forkRevision` identifies the parser source, and the
-legacy-compatible `parser.version` contains that same fork revision.
-`exporterVersion` contains the export-format version. Extraction IDs include
-the fork revision and export-format version, so a replay can be parsed again
-and stored alongside an older parser identity.
+The manifest stores each version separately. `parser.upstreamRelease` is the
+fork base. `parser.forkRevision` is the parser source commit.
+`parser.version` has the same fork commit for schema compatibility.
+`exporterVersion` is the export format. Extraction IDs include the fork commit
+and export format. A new parser version can therefore store a new extraction
+without replacing an older one.
 
 Initialize the submodule before a local build:
 
 ```sh
-git submodule update --init vendor/clarity
+git submodule update --init --recursive
 ```
 
 The container entry point is:
@@ -37,9 +36,15 @@ java -jar parser.jar MATCH_ID --replay /path/replay.dem \
 Replay files named `.bz2` are detected by their magic bytes and may contain
 either BZip2 or Zstandard data.
 
-Limits are configured with `PARSER_MAX_INPUT_BYTES` (default 2 GiB),
-`PARSER_MAX_OUTPUT_BYTES` (12 GiB), `PARSER_MAX_RECORDS` (50 million),
-`PARSER_TIMEOUT_SECONDS` (1800), and `CHECKPOINT_INTERVAL_SECONDS` (30).
-An extraction is only published after all files and their manifest have been
-closed and hashed. A failed partial extraction is retained with a `.failed-*`
-suffix and is never loadable because it has no `manifest.json`.
+Limits use these environment variables:
+
+- `PARSER_MAX_INPUT_BYTES`: 2 GiB by default.
+- `PARSER_MAX_OUTPUT_BYTES`: 1 GiB by default.
+- `PARSER_MAX_RECORDS`: 2,000,000 by default.
+- `PARSER_TIMEOUT_SECONDS`: 180 seconds by default.
+- `CHECKPOINT_INTERVAL_SECONDS`: 30 seconds by default. This value remains in
+  the versioned profile for compatibility with older extractions.
+
+The exporter publishes an extraction only after it closes and hashes all
+files and the manifest. A failed partial extraction gets a `.failed-*` suffix.
+It has no `manifest.json`, so the loader cannot import it.

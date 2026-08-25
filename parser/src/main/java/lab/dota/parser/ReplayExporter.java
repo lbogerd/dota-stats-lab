@@ -1,277 +1,185 @@
 package lab.dota.parser;
 
-import com.google.protobuf.GeneratedMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import skadistats.clarity.model.Entity;
-import skadistats.clarity.model.FieldPath;
-import skadistats.clarity.processor.entities.OnEntityCreated;
-import skadistats.clarity.processor.entities.OnEntityDeleted;
-import skadistats.clarity.processor.entities.OnEntityUpdated;
-import skadistats.clarity.processor.entities.UsesEntities;
+import skadistats.clarity.model.CombatLogEntry;
+import skadistats.clarity.processor.gameevents.OnCombatLogEntry;
 import skadistats.clarity.processor.reader.OnMessage;
-import skadistats.clarity.processor.reader.OnTickEnd;
 import skadistats.clarity.processor.runner.Context;
-import skadistats.clarity.wire.shared.common.proto.CommonNetworkBaseTypes;
+import skadistats.clarity.wire.dota.s2.proto.DOTAS2GcMessagesCommon;
+import skadistats.clarity.wire.dota.s2.proto.DOTAS2MatchMetadata;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
-@UsesEntities
+/** Compact, analysis-oriented default extraction profile. */
 final class ReplayExporter {
+    static final String PROFILE = "match-analysis-v1";
     private static final Logger log = LoggerFactory.getLogger(ReplayExporter.class);
+
     private final String extractionId;
     private final NdjsonSet output;
-    private final ExportConfig config;
     private final Instant deadline;
-    private final Map<Integer, ActiveEntity> active = new HashMap<>();
-    private long sequence;
-    private long entityInstanceSequence;
-    private Integer netTick;
-    private Double gameTime;
-    private Double gameStartTime;
-    private long totalPausedTicks;
-    private boolean paused;
-    private float millisPerTick;
-    private double nextCheckpoint;
-    private boolean clockInitialized;
-    private int demoTick;
+    private DOTAS2GcMessagesCommon.CMsgDOTAMatch match;
+    private DOTAS2MatchMetadata.CDOTAMatchMetadataFile metadata;
+    private int matchTick;
+    private int metadataTick;
+    private long combatSequence;
 
     ReplayExporter(String extractionId, NdjsonSet output, ExportConfig config, Instant startedAt) {
         this.extractionId = extractionId;
         this.output = output;
-        this.config = config;
         this.deadline = startedAt.plusSeconds(config.timeoutSeconds());
     }
 
-    @OnMessage
-    public void onMessage(Context context, GeneratedMessage message) throws Exception {
-        touch(context);
-        long ownerSequence = nextSequence();
-        Map<String, Object> payload = ValueEncoder.encodeMessage(message, "", (path, bytes) -> blob(ownerSequence, path, bytes));
-        Map<String, Object> row = common(ownerSequence);
-        row.put("category", "message");
-        row.put("recordType", message.getDescriptorForType().getFullName());
-        row.put("payload", payload);
-        output.write("records", row);
+    @OnMessage(DOTAS2GcMessagesCommon.CMsgDOTAMatch.class)
+    public void onMatch(Context context, DOTAS2GcMessagesCommon.CMsgDOTAMatch message) {
+        touch();
+        match = message;
+        matchTick = context.getTick();
     }
 
-    @OnMessage(CommonNetworkBaseTypes.CNETMsg_Tick.class)
-    public void onNetTick(Context context, CommonNetworkBaseTypes.CNETMsg_Tick message) {
-        touch(context);
-        netTick = message.getTick();
-        refreshDerivedGameTime();
+    @OnMessage(DOTAS2MatchMetadata.CDOTAMatchMetadataFile.class)
+    public void onMetadata(Context context, DOTAS2MatchMetadata.CDOTAMatchMetadataFile message) {
+        touch();
+        metadata = message;
+        metadataTick = context.getTick();
     }
 
-    @OnEntityCreated
-    public void onCreated(Context context, Entity entity) throws Exception {
-        touch(context);
-        ActiveEntity previous = active.remove(entity.getIndex());
-        if (previous != null) emitEvent(previous, "delete", List.of(), true);
-
-        ActiveEntity current = new ActiveEntity(Long.toString(++entityInstanceSequence), entity);
-        active.put(entity.getIndex(), current);
-        List<Property> properties = properties(entity);
-        observeClock(properties);
-        long seq = nextSequence();
-        Map<String, Object> instance = common(seq);
-        instance.put("entityInstanceId", current.id());
-        putIdentity(instance, entity);
-        output.write("entityInstances", instance);
-        emitEvent(current, "create", List.of(), false);
-
-        for (Property property : properties) emitProperty(current, property);
-        emitCheckpoint(current, "creation", properties);
-    }
-
-    @OnEntityUpdated
-    public void onUpdated(Context context, Entity entity, FieldPath[] fieldPaths, int count) throws Exception {
-        touch(context);
-        ActiveEntity current = active.get(entity.getIndex());
-        if (current == null) {
-            // Defensive support for damaged/older demos where Clarity can expose
-            // an update without a visible create callback.
-            onCreated(context, entity);
-            current = active.get(entity.getIndex());
-        }
-        List<Property> changed = new ArrayList<>(count);
-        List<String> paths = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            String path = entity.getDtClass().getNameForFieldPath(fieldPaths[i]);
-            Object value = entity.getPropertyForFieldPath(fieldPaths[i]);
-            changed.add(new Property(path, value));
-            paths.add(path);
-        }
-        observeClock(changed);
-        emitEvent(current, "update", paths, false);
-        for (Property property : changed) emitProperty(current, property);
-    }
-
-    @OnEntityDeleted
-    public void onDeleted(Context context, Entity entity) throws Exception {
-        touch(context);
-        ActiveEntity current = active.remove(entity.getIndex());
-        if (current != null) emitEvent(current, "delete", List.of(), false);
-    }
-
-    @OnTickEnd
-    public void onTickEnd(Context context, boolean synthetic) throws Exception {
-        touch(context);
-        if (paused || gameTime == null) return;
-        while (gameTime >= nextCheckpoint) {
-            checkpointAll("interval");
-            nextCheckpoint += config.checkpointIntervalSeconds();
-        }
+    /**
+     * Retain the full useful combat history in typed, compact columns. This is
+     * intentionally not the original protobuf JSON: names, amounts, teams,
+     * locations, economy samples, durations and flags cover combat/economy/
+     * objective analysis without presentation or transport noise.
+     */
+    @OnCombatLogEntry
+    public void onCombatLog(CombatLogEntry event) throws IOException {
+        touch();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("extractionId", extractionId);
+        row.put("sequence", ++combatSequence);
+        row.put("gameTime", event.hasTimestamp() ? event.getTimestamp() : null);
+        row.put("rawTime", event.hasTimestampRaw() ? event.getTimestampRaw() : null);
+        row.put("eventType", event.hasType() ? event.getType().name() : null);
+        row.put("targetName", event.hasTargetName() ? event.getTargetName() : null);
+        row.put("targetSourceName", event.hasTargetSourceName() ? event.getTargetSourceName() : null);
+        row.put("attackerName", event.hasAttackerName() ? event.getAttackerName() : null);
+        row.put("damageSourceName", event.hasDamageSourceName() ? event.getDamageSourceName() : null);
+        row.put("inflictorName", event.hasInflictorName() ? event.getInflictorName() : null);
+        row.put("targetTeam", event.hasTargetTeam() ? event.getTargetTeam() : null);
+        row.put("attackerTeam", event.hasAttackerTeam() ? event.getAttackerTeam() : null);
+        row.put("value", event.hasValue() ? event.getValue() : null);
+        row.put("valueName", event.hasValue() ? event.getValueName() : null);
+        row.put("health", event.hasHealth() ? event.getHealth() : null);
+        row.put("locationX", event.hasLocationX() ? event.getLocationX() : null);
+        row.put("locationY", event.hasLocationY() ? event.getLocationY() : null);
+        row.put("eventLocation", event.hasEventLocation() ? event.getEventLocation() : null);
+        row.put("stunDuration", event.hasStunDuration() ? event.getStunDuration() : null);
+        row.put("slowDuration", event.hasSlowDuration() ? event.getSlowDuration() : null);
+        row.put("modifierDuration", event.hasModifierDuration() ? event.getModifierDuration() : null);
+        row.put("modifierElapsedDuration", event.hasModifierElapsedDuration() ? event.getModifierElapsedDuration() : null);
+        row.put("goldReason", event.hasGoldReason() ? event.getGoldReason() : null);
+        row.put("xpReason", event.hasXpReason() ? event.getXpReason() : null);
+        row.put("lastHits", event.hasLastHits() ? event.getLastHits() : null);
+        row.put("netWorth", event.hasNetworth() ? event.getNetworth() : null);
+        row.put("gpm", event.hasGpm() ? event.getGpm() : null);
+        row.put("xpm", event.hasXpm() ? event.getXpm() : null);
+        row.put("attackerHeroLevel", event.hasAttackerHeroLevel() ? event.getAttackerHeroLevel() : null);
+        row.put("targetHeroLevel", event.hasTargetHeroLevel() ? event.getTargetHeroLevel() : null);
+        row.put("damageType", event.hasDamageType() ? event.getDamageType() : null);
+        row.put("damageCategory", event.hasDamageCategory() ? event.getDamageCategory() : null);
+        row.put("runeType", event.hasRuneType() ? event.getRuneType() : null);
+        row.put("stackCount", event.hasStackCount() ? event.getStackCount() : null);
+        row.put("observerWardsPlaced", event.hasObsWardsPlaced() ? event.getObsWardsPlaced() : null);
+        row.put("assistPlayers", event.hasAssistPlayers() ? event.getAssistPlayers() : java.util.List.of());
+        row.put("abilityLevel", event.hasAbilityLevel() ? event.getAbilityLevel() : null);
+        row.put("neutralCampType", event.hasNeutralCampType() ? event.getNeutralCampType() : null);
+        row.put("buildingType", event.hasBuildingType() ? event.getBuildingType() : null);
+        row.put("modifierPurgeAbility", event.hasModifierPurgeAbility() ? event.getModifierPurgeAbility() : null);
+        row.put("modifierPurgeNpc", event.hasModifierPurgeNpc() ? event.getModifierPurgeNpc() : null);
+        row.put("totalUnitDeathCount", event.hasTotalUnitDeathCount() ? event.getTotalUnitDeathCount() : null);
+        row.put("modifierAbility", event.hasModifierAbility() ? event.getModifierAbility() : null);
+        row.put("killEaterEvent", event.hasKillEaterEvent() ? event.getKillEaterEvent() : null);
+        row.put("unitStatusLabel", event.hasUnitStatusLabel() ? event.getUnitStatusLabel() : null);
+        row.put("neutralCampTeam", event.hasNeutralCampTeam() ? event.getNeutralCampTeam() : null);
+        row.put("regeneratedHealth", event.hasRegeneratedHealth() ? event.getRegeneratedHealth() : null);
+        row.put("trackedStatId", event.hasTrackedStatId() ? event.getTrackedStatId() : null);
+        row.put("modifierPurgedDuration", event.hasModifierPurgedDuration() ? event.getModifierPurgedDuration() : null);
+        row.put("attackerHero", event.hasAttackerHero() ? event.isAttackerHero() : null);
+        row.put("targetHero", event.hasTargetHero() ? event.isTargetHero() : null);
+        row.put("targetBuilding", event.hasTargetBuilding() ? event.isTargetBuilding() : null);
+        row.put("attackerIllusion", event.hasAttackerIllusion() ? event.isAttackerIllusion() : null);
+        row.put("targetIllusion", event.hasTargetIllusion() ? event.isTargetIllusion() : null);
+        row.put("healSave", event.hasHealSave() ? event.isHealSave() : null);
+        row.put("longRangeKill", event.hasLongRangeKill() ? event.isLongRangeKill() : null);
+        row.put("visibleRadiant", event.hasVisibleRadiant() ? event.isVisibleRadiant() : null);
+        row.put("visibleDire", event.hasVisibleDire() ? event.isVisibleDire() : null);
+        row.put("abilityToggleOn", event.hasAbilityToggleOn() ? event.isAbilityToggleOn() : null);
+        row.put("abilityToggleOff", event.hasAbilityToggleOff() ? event.isAbilityToggleOff() : null);
+        row.put("hiddenModifier", event.hasHiddenModifier() ? event.getHiddenModifier() : null);
+        row.put("ultimateAbility", event.hasUltimateAbility() ? event.isUltimateAbility() : null);
+        row.put("targetSelf", event.hasTargetSelf() ? event.isTargetSelf() : null);
+        row.put("invisibilityModifier", event.hasInvisibilityModifier() ? event.isInvisibilityModifier() : null);
+        row.put("silenceModifier", event.hasSilenceModifier() ? event.isSilenceModifier() : null);
+        row.put("healFromLifesteal", event.hasHealFromLifesteal() ? event.isHealFromLifesteal() : null);
+        row.put("modifierPurged", event.hasModifierPurged() ? event.isModifierPurged() : null);
+        row.put("spellEvaded", event.hasSpellEvaded() ? event.isSpellEvaded() : null);
+        row.put("motionControllerModifier", event.hasMotionControllerModifier() ? event.isMotionControllerModifier() : null);
+        row.put("rootModifier", event.hasRootModifier() ? event.isRootModifier() : null);
+        row.put("auraModifier", event.hasAuraModifier() ? event.isAuraModifier() : null);
+        row.put("armorDebuffModifier", event.hasArmorDebuffModifier() ? event.isArmorDebuffModifier() : null);
+        row.put("noPhysicalDamageModifier", event.hasNoPhysicalDamageModifier() ? event.isNoPhysicalDamageModifier() : null);
+        row.put("modifierHidden", event.hasModifierHidden() ? event.isModifierHidden() : null);
+        row.put("inflictorIsStolenAbility", event.hasInflictorIsStolenAbility() ? event.isInflictorIsStolenAbility() : null);
+        row.put("spellGeneratedAttack", event.hasSpellGeneratedAttack() ? event.isSpellGeneratedAttack() : null);
+        row.put("atNightTime", event.hasAtNightTime() ? event.isAtNightTime() : null);
+        row.put("attackerHasScepter", event.hasAttackerHasScepter() ? event.isAttackerHasScepter() : null);
+        row.put("willReincarnate", event.hasWillReincarnate() ? event.isWillReincarnate() : null);
+        row.put("usesCharges", event.hasUsesCharges() ? event.isUsesCharges() : null);
+        row.put("healFromRegen", event.hasHealFromRegen() ? event.isHealFromRegen() : null);
+        output.write("combatEvents", row);
     }
 
     void finish() throws Exception {
-        checkpointAll("completion");
-        log.info("exported {} records across {} entity instances", output.totalRecords(), entityInstanceSequence);
+        if (match == null) throw new IOException("replay does not contain CMsgDOTAMatch");
+        if (metadata == null) throw new IOException("replay does not contain CDOTAMatchMetadataFile");
+        writeRecord(1, matchTick, "match_overview", match);
+        writeRecord(2, metadataTick, "match_metadata", metadata);
+        log.info("profile={} exported 2 match documents and {} typed combat events",
+                PROFILE, combatSequence);
     }
 
-    private void checkpointAll(String kind) throws Exception {
-        // Clarity only calls us as state advances; if game time is paused it is
-        // unchanged, so the interval boundary cannot advance.
-        for (ActiveEntity entity : List.copyOf(active.values())) {
-            emitCheckpoint(entity, kind, properties(entity.entity()));
-        }
-    }
-
-    private void emitEvent(ActiveEntity current, String type, List<String> paths, boolean synthetic) throws IOException {
-        long seq = nextSequence();
-        Map<String, Object> row = common(seq);
-        row.put("entityInstanceId", current.id());
-        row.put("eventType", type);
-        row.put("changedPropertyPaths", paths);
-        row.put("synthetic", synthetic);
-        output.write("entityEvents", row);
-    }
-
-    private void emitProperty(ActiveEntity current, Property property) throws Exception {
-        long ownerSequence = nextSequence();
-        Object encoded = ValueEncoder.encode(property.value(), property.path(),
-                (path, bytes) -> blob(ownerSequence, path, bytes));
-        Map<String, Object> row = common(ownerSequence);
-        row.put("entityInstanceId", current.id());
-        row.put("propertyPath", property.path());
-        row.put("valueType", ValueEncoder.valueType(property.value()));
-        row.put("value", encoded);
-        output.write("propertyUpdates", row);
-    }
-
-    private void emitCheckpoint(ActiveEntity current, String kind, List<Property> properties) throws Exception {
-        long ownerSequence = nextSequence();
-        List<Map<String, Object>> values = new ArrayList<>(properties.size());
-        for (Property property : properties) {
-            Map<String, Object> value = new LinkedHashMap<>();
-            value.put("propertyPath", property.path());
-            value.put("valueType", ValueEncoder.valueType(property.value()));
-            value.put("value", ValueEncoder.encode(property.value(), property.path(),
-                    (path, bytes) -> blob(ownerSequence, path, bytes)));
-            values.add(value);
-        }
-        Map<String, Object> row = common(ownerSequence);
-        row.put("entityInstanceId", current.id());
-        row.put("checkpointKind", kind);
-        row.put("checkpointGameTime", gameTime);
-        row.put("properties", values);
-        output.write("checkpoints", row);
-    }
-
-    private Map<String, Object> blob(long ownerSequence, String path, byte[] bytes) throws IOException {
-        long seq = nextSequence();
-        String id = Hashing.sha256(bytes);
-        Map<String, Object> row = common(seq);
-        row.put("blobId", id);
-        row.put("recordSequence", ownerSequence);
-        row.put("fieldPath", path);
-        row.put("valueBase64", java.util.Base64.getEncoder().encodeToString(bytes));
-        output.write("blobs", row);
-        return Map.of("blobId", id);
-    }
-
-    private List<Property> properties(Entity entity) {
-        List<Property> result = new ArrayList<>();
-        Iterator<FieldPath> iterator = entity.getState().fieldPathIterator();
-        while (iterator.hasNext()) {
-            FieldPath fp = iterator.next();
-            result.add(new Property(entity.getDtClass().getNameForFieldPath(fp), entity.getPropertyForFieldPath(fp)));
-        }
-        return result;
-    }
-
-    private void observeClock(List<Property> properties) {
-        for (Property property : properties) {
-            if (property.value() instanceof Number number) {
-                if (property.path().equals("m_fGameTime") || property.path().endsWith(".m_fGameTime")) {
-                    setGameTime(number.doubleValue());
-                } else if (property.path().endsWith(".m_flGameStartTime")) {
-                    double observed = number.doubleValue();
-                    if (Double.isFinite(observed) && observed > 0) {
-                        gameStartTime = observed;
-                    }
-                } else if (property.path().endsWith(".m_nTotalPausedTicks")) {
-                    totalPausedTicks = Math.max(0, number.longValue());
-                }
-            } else if (property.value() instanceof Boolean value
-                    && property.path().endsWith(".m_bGamePaused")) {
-                paused = value;
-            }
-        }
-        refreshDerivedGameTime();
-    }
-
-    private void touch(Context context) {
-        demoTick = context.getTick();
-        millisPerTick = context.getMillisPerTick();
-        refreshDerivedGameTime();
-        if (Instant.now().isAfter(deadline)) throw new ExportLimitException("parser timeout exceeded: " + config.timeoutSeconds() + " seconds");
-    }
-
-    private void refreshDerivedGameTime() {
-        if (paused || gameStartTime == null || netTick == null || millisPerTick <= 0) return;
-        double observed = netTick * millisPerTick / 1000.0 - gameStartTime
-                - totalPausedTicks * millisPerTick / 1000.0;
-        setGameTime(observed);
-    }
-
-    private void setGameTime(double observed) {
-        if (!Double.isFinite(observed)) return;
-        gameTime = observed;
-        if (!clockInitialized) {
-            double interval = config.checkpointIntervalSeconds();
-            nextCheckpoint = (Math.floor(observed / interval) + 1.0) * interval;
-            clockInitialized = true;
-        }
-    }
-
-    private long nextSequence() { return ++sequence; }
-
-    private Map<String, Object> common(long seq) {
+    private void writeRecord(long sequence, int tick, String category,
+                             com.google.protobuf.GeneratedMessage message) throws Exception {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("extractionId", extractionId);
-        row.put("sequence", seq);
-        row.put("demoTick", demoTick);
-        row.put("netTick", netTick);
-        row.put("gameTime", gameTime);
-        return row;
+        row.put("sequence", sequence);
+        row.put("demoTick", tick);
+        row.put("netTick", null);
+        row.put("gameTime", match.hasDuration() ? match.getDuration() : null);
+        row.put("category", category);
+        row.put("recordType", message.getDescriptorForType().getName());
+        row.put("payload", ValueEncoder.encodeMessage(message, "", (path, bytes) -> {
+            long blobSequence = 2 + combatSequence + output.totalRecords();
+            Map<String, Object> blob = new LinkedHashMap<>();
+            blob.put("extractionId", extractionId);
+            blob.put("sequence", blobSequence);
+            blob.put("demoTick", tick);
+            blob.put("netTick", null);
+            blob.put("gameTime", null);
+            blob.put("blobId", Hashing.sha256(bytes));
+            blob.put("recordSequence", sequence);
+            blob.put("fieldPath", path);
+            blob.put("valueBase64", java.util.Base64.getEncoder().encodeToString(bytes));
+            output.write("blobs", blob);
+            return Map.of("blobId", Hashing.sha256(bytes));
+        }));
+        output.write("records", row);
     }
 
-    private static void putIdentity(Map<String, Object> row, Entity entity) {
-        row.put("entityIndex", entity.getIndex());
-        row.put("serial", entity.getSerial());
-        row.put("handle", entity.getHandle());
-        row.put("classId", entity.getDtClass().getClassId());
-        row.put("className", entity.getDtClass().getDtName());
+    private void touch() {
+        if (Instant.now().isAfter(deadline)) throw new ExportLimitException("parser timeout exceeded");
     }
-
-    private record ActiveEntity(String id, Entity entity) {}
-    private record Property(String path, Object value) {}
 }

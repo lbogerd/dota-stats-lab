@@ -22,6 +22,7 @@ const replaySha256 = "b".repeat(64);
 
 const goodRows: Record<string, string> = {
   "records.ndjson": JSON.stringify({ extractionId, sequence: 1, demoTick: 10, netTick: 20, gameTime: 1, category: "message", recordType: "test.Message", payload: { native: true } }) + "\n",
+  "combat_events.ndjson": "",
   "blobs.ndjson": JSON.stringify({ extractionId, sequence: 2, demoTick: 10, netTick: 20, gameTime: 1, blobId: createHash("sha256").update("x").digest("hex"), recordSequence: 1, fieldPath: "bytes", valueBase64: "eA==" }) + "\n",
   "entity_instances.ndjson": JSON.stringify({ extractionId, sequence: 3, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "1", entityIndex: 7, serial: 1, handle: 16391, classId: 2, className: "CTest" }) + "\n",
   "entity_events.ndjson": JSON.stringify({ extractionId, sequence: 4, demoTick: 10, netTick: 20, gameTime: 1, entityInstanceId: "1", eventType: "create", changedPropertyPaths: [], synthetic: false }) + "\n",
@@ -150,7 +151,7 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
     assert.equal(stored.blobs, 3);
     assert.equal(stored.exported_records, "3");
     assert.deepEqual(JSON.parse(stored.record_counts as string), {
-      records: 2, blobs: 3, entityInstances: 2, entityEvents: 3,
+      records: 2, combatEvents: 0, blobs: 3, entityInstances: 2, entityEvents: 3,
       propertyUpdates: 2, checkpoints: 3, total: 15,
     });
   } finally { connection.closeSync(); }
@@ -216,11 +217,11 @@ async function stage(
   await mkdir(directory, { recursive: true });
   const files: Record<string, unknown> = {};
   const logical: Record<string, string> = {
-    records: "records.ndjson", blobs: "blobs.ndjson", entityInstances: "entity_instances.ndjson",
+    records: "records.ndjson", combatEvents: "combat_events.ndjson", blobs: "blobs.ndjson", entityInstances: "entity_instances.ndjson",
     entityEvents: "entity_events.ndjson", propertyUpdates: "property_updates.ndjson", checkpoints: "checkpoints.ndjson",
   };
   for (const [key, name] of Object.entries(logical)) {
-    const body = rows[name]!;
+    const body = rows[name] ?? "";
     await writeFile(path.join(directory, name), body);
     files[key] = {
       path: name,

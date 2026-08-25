@@ -60,16 +60,31 @@ export async function loadValidatedExtraction(validated: ValidatedExtraction): P
         await insertCatalog(database.connection, manifest, acquisition);
         await importStagedFiles(database.connection, extractionDir, manifest);
         const storedCounts = await validateImportedRows(database.connection, extractionDir, manifest);
+        const importElapsed = Math.max(0, Math.round(performance.now() - loadStarted));
+        logPhase(manifest.extractionId, "duckdb_write", importElapsed, storedCounts.total);
+        const summaryStarted = performance.now();
+        await materializeMatchAnalysis(database.connection, manifest);
+        const summaryElapsed = Math.max(0, Math.round(performance.now() - summaryStarted));
+        const summaryRows = await analysisRowCount(database.connection, manifest.extractionId);
+        logPhase(manifest.extractionId, "summary", summaryElapsed, summaryRows);
         await database.connection.run(
           `UPDATE catalog.extractions SET status = 'succeeded', completed_at = current_timestamp,
-             load_elapsed_ms = $elapsed, record_counts = $counts::JSON WHERE extraction_id = $id`,
+             load_elapsed_ms = $elapsed, summary_elapsed_ms = $summaryElapsed,
+             record_counts = $counts::JSON WHERE extraction_id = $id`,
           {
             elapsed: BigInt(Math.max(0, Math.round(performance.now() - loadStarted))),
+            summaryElapsed: BigInt(summaryElapsed),
             counts: jsonStringify(storedCounts),
             id: manifest.extractionId,
           },
         );
         await database.connection.run("COMMIT");
+        logPhase(
+          manifest.extractionId,
+          "commit",
+          Math.max(0, Math.round(performance.now() - loadStarted)),
+          storedCounts.total + summaryRows,
+        );
       } catch (error) {
         try { await database.connection.run("ROLLBACK"); }
         catch (rollbackError) {
@@ -87,6 +102,22 @@ export async function loadValidatedExtraction(validated: ValidatedExtraction): P
       return { extractionId: manifest.extractionId, status: "loaded" };
     } finally { database.close(); }
   });
+}
+
+async function analysisRowCount(connection: DuckDBConnection, extractionId: string): Promise<number> {
+  const result = await connection.runAndReadAll(
+    `SELECT
+       (SELECT count(*) FROM analysis.matches WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.players WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.player_items WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id) AS rows`,
+    { id: extractionId },
+  );
+  return Number((result.getRowObjects()[0] as { rows: bigint }).rows);
+}
+
+function logPhase(ingestionId: string, phase: string, elapsedMs: number, rows: number): void {
+  process.stderr.write(`ingestion=${ingestionId} phase=${phase} elapsed_ms=${elapsedMs} rows=${rows}\n`);
 }
 
 function validateAcquisition(manifest: Manifest): Record<string, unknown> {
@@ -108,7 +139,10 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
     {
       matchId: BigInt(manifest.matchId), source: String(acquisition.source ?? "parser_manifest"),
       url: typeof acquisition.replayUrl === "string" ? acquisition.replayUrl : null,
-      replayPath: `/data/replays/${manifest.matchId}/replay.dem.bz2`, sha: manifest.replaySha256,
+      replayPath: typeof acquisition.replayPath === "string"
+        ? acquisition.replayPath
+        : `/data/replays/${manifest.matchId}/replay.dem.bz2`,
+      sha: manifest.replaySha256,
       bytes: typeof acquisition.replayBytes === "number" ? BigInt(acquisition.replayBytes) : null,
       metadata: jsonStringify(acquisition),
     },
@@ -117,9 +151,9 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
     `INSERT INTO catalog.extractions
       (extraction_id, match_id, replay_sha256, parser_name, parser_version, exporter_version,
        extraction_config, checkpoint_interval_seconds, output_limit_bytes, started_at, status,
-       parse_elapsed_ms, output_size_bytes, record_counts, manifest)
+       preparation_elapsed_ms, parse_elapsed_ms, output_size_bytes, record_counts, manifest)
      VALUES ($id, $matchId, $sha, $parserName, $parserVersion, $exporterVersion,
-       $config::JSON, $interval, $limit, $startedAt::TIMESTAMPTZ, 'started', $parseMs, $outputBytes,
+       $config::JSON, $interval, $limit, $startedAt::TIMESTAMPTZ, 'started', $preparationMs, $parseMs, $outputBytes,
        $counts::JSON, $manifest::JSON)
      ON CONFLICT (extraction_id) DO UPDATE SET
        match_id = excluded.match_id, replay_sha256 = excluded.replay_sha256,
@@ -127,7 +161,9 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
        exporter_version = excluded.exporter_version, extraction_config = excluded.extraction_config,
        checkpoint_interval_seconds = excluded.checkpoint_interval_seconds,
        output_limit_bytes = excluded.output_limit_bytes, started_at = excluded.started_at,
-       status = 'started', completed_at = NULL, parse_elapsed_ms = excluded.parse_elapsed_ms,
+       status = 'started', completed_at = NULL,
+       preparation_elapsed_ms = excluded.preparation_elapsed_ms,
+       parse_elapsed_ms = excluded.parse_elapsed_ms,
        load_elapsed_ms = NULL, output_size_bytes = excluded.output_size_bytes,
        record_counts = excluded.record_counts, error_code = NULL, error_message = NULL,
        manifest = excluded.manifest`,
@@ -136,7 +172,9 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
       parserName: manifest.parser.name, parserVersion: manifest.parser.version,
       exporterVersion: manifest.exporterVersion, config: jsonStringify(manifest.config),
       interval: checkpointInterval, limit: BigInt(outputLimit), startedAt: manifest.startedAt,
-      parseMs: BigInt(Math.max(0, Math.round(manifest.elapsedMs))), outputBytes: BigInt(totalBytes),
+      preparationMs: BigInt(Math.max(0, Math.round(manifest.preparationElapsedMs ?? 0))),
+      parseMs: BigInt(Math.max(0, Math.round(manifest.parsingElapsedMs ?? manifest.elapsedMs))),
+      outputBytes: BigInt(totalBytes),
       counts: jsonStringify({}), manifest: jsonStringify(manifest),
     },
   );
@@ -152,6 +190,28 @@ async function importStagedFiles(connection: DuckDBConnection, dir: string, mani
       SELECT extractionId, sequence::UBIGINT, demoTick, netTick, gameTime, category, recordType, payload::JSON
       FROM read_ndjson_auto('__FILE__')
       WHERE recordType NOT IN (${rejectedRecordTypes}) OR recordType IS NULL`],
+    ["combatEvents", `INSERT INTO raw.combat_events
+      SELECT extractionId, sequence::UBIGINT, gameTime, rawTime, eventType,
+        targetName, attackerName, damageSourceName, inflictorName,
+        targetTeam, attackerTeam, value, health, locationX, locationY,
+        eventLocation, stunDuration, slowDuration, modifierDuration,
+        goldReason, xpReason, lastHits, netWorth, gpm, xpm,
+        attackerHeroLevel, targetHeroLevel, damageType, damageCategory,
+        runeType, stackCount, observerWardsPlaced, assistPlayers::INTEGER[],
+        attackerHero, targetHero, targetBuilding, attackerIllusion,
+        targetIllusion, healSave, longRangeKill,
+        targetSourceName, valueName, modifierElapsedDuration, abilityLevel,
+        neutralCampType, buildingType, modifierPurgeAbility, modifierPurgeNpc,
+        totalUnitDeathCount, modifierAbility, killEaterEvent, unitStatusLabel,
+        neutralCampTeam, regeneratedHealth, trackedStatId, modifierPurgedDuration,
+        visibleRadiant, visibleDire, abilityToggleOn, abilityToggleOff,
+        hiddenModifier, ultimateAbility, targetSelf, invisibilityModifier,
+        silenceModifier, healFromLifesteal, modifierPurged, spellEvaded,
+        motionControllerModifier, rootModifier, auraModifier, armorDebuffModifier,
+        noPhysicalDamageModifier, modifierHidden, inflictorIsStolenAbility,
+        spellGeneratedAttack, atNightTime, attackerHasScepter, willReincarnate,
+        usesCharges, healFromRegen
+      FROM read_ndjson_auto('__FILE__')`],
     ["entityInstances", `INSERT INTO raw.entity_instances
       SELECT extractionId, sequence::UBIGINT, entityInstanceId::UBIGINT, entityIndex::UINTEGER, serial::UINTEGER,
         handle::UBIGINT, classId::INTEGER, className, demoTick, netTick, gameTime
@@ -208,6 +268,7 @@ async function importStagedFiles(connection: DuckDBConnection, dir: string, mani
 
 type StoredCounts = {
   records: number;
+  combatEvents: number;
   blobs: number;
   entityInstances: number;
   entityEvents: number;
@@ -228,6 +289,7 @@ async function validateImportedRows(
   const result = await connection.runAndReadAll(
     `SELECT
        (SELECT count(*) FROM raw.records WHERE extraction_id = $id) AS records,
+       (SELECT count(*) FROM raw.combat_events WHERE extraction_id = $id) AS combat_events,
        (SELECT count(*) FROM raw.record_blobs WHERE extraction_id = $id) AS blobs,
        (SELECT count(*) FROM raw.entity_instances WHERE extraction_id = $id) AS entity_instances,
        (SELECT count(*) FROM raw.entity_events WHERE extraction_id = $id) AS entity_events,
@@ -287,6 +349,7 @@ async function validateImportedRows(
 
   const expected: Record<string, bigint> = {
     records: await stagedCount(connection, dir, manifest, "records", `recordType NOT IN (${rejectedRecordTypes}) OR recordType IS NULL`),
+    combat_events: await stagedCount(connection, dir, manifest, "combatEvents"),
     entity_instances: await stagedCount(connection, dir, manifest, "entityInstances", `className NOT IN (${rejectedEntityClasses}) OR className IS NULL`),
     entity_events: await stagedCount(connection, dir, manifest, "entityEvents", `eventType IN (${storedEntityEventTypes})`, true),
     property_updates: await stagedCount(connection, dir, manifest, "propertyUpdates", undefined, true),
@@ -301,13 +364,14 @@ async function validateImportedRows(
   }
   const counts = {
     records: Number(importedCount("records")),
+    combatEvents: Number(importedCount("combat_events")),
     blobs: Number(importedCount("blobs")),
     entityInstances: Number(importedCount("entity_instances")),
     entityEvents: Number(importedCount("entity_events")),
     propertyUpdates: Number(importedCount("property_updates")),
     checkpoints: Number(importedCount("checkpoints")),
   };
-  const total = counts.records + counts.blobs + counts.entityInstances + counts.entityEvents
+  const total = counts.records + counts.combatEvents + counts.blobs + counts.entityInstances + counts.entityEvents
     + counts.propertyUpdates + counts.checkpoints;
   return { ...counts, total };
 }
@@ -355,6 +419,147 @@ async function stagedBlobCount(
      )`,
   );
   return (result.getRowObjects()[0] as { count: bigint }).count;
+}
+
+async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: Manifest): Promise<void> {
+  const documents = await connection.runAndReadAll(
+    `SELECT count(*) FILTER (WHERE record_type = 'CMsgDOTAMatch') AS matches,
+            count(*) FILTER (WHERE record_type = 'CDOTAMatchMetadataFile') AS metadata
+       FROM raw.records WHERE extraction_id = $id`,
+    { id: manifest.extractionId },
+  );
+  const counts = documents.getRowObjects()[0] as { matches: bigint; metadata: bigint };
+  if (counts.matches === 0n && counts.metadata === 0n) return;
+  if (counts.matches !== 1n || counts.metadata !== 1n) {
+    throw new Error("match-analysis profile requires one overview and one metadata document");
+  }
+
+  await connection.run(
+    `INSERT INTO analysis.matches
+     SELECT
+       $id,
+       try_cast(json_extract_string(payload, '$.match_id') AS UBIGINT),
+       CASE WHEN json_extract_string(payload, '$.starttime') IS NULL THEN NULL
+            ELSE to_timestamp(try_cast(json_extract_string(payload, '$.starttime') AS BIGINT)) END,
+       try_cast(json_extract_string(payload, '$.duration') AS INTEGER),
+       json_extract_string(payload, '$.game_mode'),
+       CASE json_extract_string(payload, '$.lobby_type')
+         WHEN 'DOTA_LOBBY_TYPE_NORMAL' THEN 0
+         WHEN 'DOTA_LOBBY_TYPE_PRACTICE' THEN 1
+         WHEN 'DOTA_LOBBY_TYPE_TOURNAMENT' THEN 2
+         WHEN 'DOTA_LOBBY_TYPE_TUTORIAL' THEN 3
+         WHEN 'DOTA_LOBBY_TYPE_COOP_BOTS' THEN 4
+         WHEN 'DOTA_LOBBY_TYPE_TEAM_MATCH' THEN 5
+         WHEN 'DOTA_LOBBY_TYPE_SOLO_QUEUE' THEN 6
+         WHEN 'DOTA_LOBBY_TYPE_RANKED' THEN 7
+         WHEN 'DOTA_LOBBY_TYPE_1V1MID' THEN 8
+         WHEN 'DOTA_LOBBY_TYPE_WEEKEND_TOURNEY' THEN 9
+         WHEN 'DOTA_LOBBY_TYPE_LOCAL_BOTS' THEN 10
+         WHEN 'DOTA_LOBBY_TYPE_SPECTATOR' THEN 11
+         WHEN 'DOTA_LOBBY_TYPE_EVENT' THEN 12
+         WHEN 'DOTA_LOBBY_TYPE_GAUNTLET' THEN 13
+         WHEN 'DOTA_LOBBY_TYPE_NEW_PLAYER' THEN 14
+         WHEN 'DOTA_LOBBY_TYPE_FEATURED' THEN 15
+         ELSE try_cast(json_extract_string(payload, '$.lobby_type') AS INTEGER)
+       END,
+       CASE
+         WHEN lower(json_extract_string(payload, '$.match_outcome')) LIKE '%radiantvictory%'
+           OR lower(json_extract_string(payload, '$.match_outcome')) LIKE '%radvictory%' THEN 2
+         WHEN lower(json_extract_string(payload, '$.match_outcome')) LIKE '%direvictory%' THEN 3
+       END,
+       CASE
+         WHEN lower(json_extract_string(payload, '$.match_outcome')) LIKE '%radiantvictory%'
+           OR lower(json_extract_string(payload, '$.match_outcome')) LIKE '%radvictory%' THEN 'Radiant'
+         WHEN lower(json_extract_string(payload, '$.match_outcome')) LIKE '%direvictory%' THEN 'Dire'
+       END,
+       try_cast(json_extract_string(payload, '$.radiant_team_score') AS INTEGER),
+       try_cast(json_extract_string(payload, '$.dire_team_score') AS INTEGER),
+       json_extract_string(payload, '$.radiant_team_name'),
+       json_extract_string(payload, '$.dire_team_name'),
+       try_cast(json_extract_string(payload, '$.cluster') AS INTEGER),
+       try_cast(json_extract_string(payload, '$.first_blood_time') AS INTEGER),
+       (SELECT try_cast(json_extract_string(metadata.payload, '$.version') AS INTEGER)
+          FROM raw.records metadata
+         WHERE metadata.extraction_id = $id
+           AND metadata.record_type = 'CDOTAMatchMetadataFile')
+     FROM raw.records
+     WHERE extraction_id = $id AND record_type = 'CMsgDOTAMatch'`,
+    { id: manifest.extractionId },
+  );
+
+  const reported = await connection.runAndReadAll(
+    "SELECT match_id FROM analysis.matches WHERE extraction_id = $id", { id: manifest.extractionId },
+  );
+  const reportedId = (reported.getRowObjects()[0] as { match_id: bigint } | undefined)?.match_id;
+  if (reportedId !== BigInt(manifest.matchId)) {
+    throw new Error(`Replay match ID ${String(reportedId)} does not match requested ID ${manifest.matchId}`);
+  }
+
+  await connection.run(
+    `INSERT INTO analysis.players
+     SELECT
+       $id,
+       try_cast(json_extract_string(player.value, '$.player_slot') AS UINTEGER),
+       CASE json_extract_string(player.value, '$.team_number')
+         WHEN 'DOTA_GC_TEAM_GOOD_GUYS' THEN 2 WHEN 'DOTA_GC_TEAM_BAD_GUYS' THEN 3
+       END,
+       CASE json_extract_string(player.value, '$.team_number')
+         WHEN 'DOTA_GC_TEAM_GOOD_GUYS' THEN 'Radiant' WHEN 'DOTA_GC_TEAM_BAD_GUYS' THEN 'Dire'
+       END,
+       try_cast(json_extract_string(player.value, '$.team_slot') AS UINTEGER),
+       try_cast(json_extract_string(player.value, '$.account_id') AS UBIGINT),
+       nullif(json_extract_string(player.value, '$.player_name'), ''),
+       try_cast(json_extract_string(player.value, '$.hero_id') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.level') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.kills') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.deaths') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.assists') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.last_hits') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.denies') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.gold_per_min') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.xp_per_min') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.net_worth') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.hero_damage') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.tower_damage') AS INTEGER),
+       try_cast(json_extract_string(player.value, '$.hero_healing') AS INTEGER)
+     FROM raw.records overview, json_each(overview.payload, '$.players') player
+     WHERE overview.extraction_id = $id AND overview.record_type = 'CMsgDOTAMatch'
+       AND json_extract_string(player.value, '$.team_number') IN
+           ('DOTA_GC_TEAM_GOOD_GUYS', 'DOTA_GC_TEAM_BAD_GUYS')`,
+    { id: manifest.extractionId },
+  );
+
+  await connection.run(
+    `INSERT INTO analysis.player_items
+     SELECT $id,
+       try_cast(json_extract_string(player.value, '$.player_slot') AS UINTEGER),
+       item_slot::UINTEGER,
+       try_cast(json_extract_string(player.value, format('$.item_{}', item_slot)) AS INTEGER)
+     FROM raw.records overview,
+          json_each(overview.payload, '$.players') player,
+          range(10) slots(item_slot)
+     WHERE overview.extraction_id = $id AND overview.record_type = 'CMsgDOTAMatch'
+       AND json_extract_string(player.value, '$.team_number') IN
+           ('DOTA_GC_TEAM_GOOD_GUYS', 'DOTA_GC_TEAM_BAD_GUYS')`,
+    { id: manifest.extractionId },
+  );
+
+  await connection.run(
+    `INSERT INTO analysis.team_time_series
+     SELECT $id,
+       try_cast(json_extract_string(team.value, '$.dota_team') AS INTEGER),
+       sample.key::UINTEGER,
+       try_cast(sample.value AS DOUBLE),
+       try_cast(json_extract(team.value, format('$.graph_gold_earned[{}]', sample.key)) AS DOUBLE),
+       try_cast(json_extract(team.value, format('$.graph_experience[{}]', sample.key)) AS DOUBLE)
+     FROM raw.records metadata,
+          json_each(metadata.payload, '$.metadata.teams') team,
+          json_each(team.value, '$.graph_net_worth') sample
+     WHERE metadata.extraction_id = $id
+       AND metadata.record_type = 'CDOTAMatchMetadataFile'
+       AND try_cast(json_extract_string(team.value, '$.dota_team') AS INTEGER) IN (2, 3)`,
+    { id: manifest.extractionId },
+  );
 }
 
 async function recordFailure(connection: DuckDBConnection, manifest: Manifest, error: unknown): Promise<void> {

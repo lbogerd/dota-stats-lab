@@ -5,6 +5,7 @@ import { withReadOnlyWarehouse } from "./warehouse.js";
 
 export interface ExtractionCounts {
   records: string;
+  combatEvents: string;
   blobs: string;
   entityInstances: string;
   entityEvents: string;
@@ -25,6 +26,11 @@ export interface CatalogMatchSummary {
   counts: ExtractionCounts;
   errorCode: string | null;
   errorMessage: string | null;
+}
+
+export interface CatalogStats {
+  storedMatches: string;
+  totalRecords: string;
 }
 
 export interface CatalogAcquisition {
@@ -89,6 +95,18 @@ export async function listMatches(options: ListMatchesOptions = {}): Promise<Cat
   return withReadOnlyWarehouse(async (connection) => {
     const result = await connection.runAndReadAll(LIST_MATCHES_SQL, { limit, offset });
     return result.getRowObjectsJson().map(mapMatchSummary);
+  });
+}
+
+export async function getCatalogStats(): Promise<CatalogStats> {
+  return withReadOnlyWarehouse(async (connection) => {
+    const result = await connection.runAndReadAll(CATALOG_STATS_SQL);
+    const row = result.getRowObjectsJson()[0];
+    if (row === undefined) throw new Error("Catalog statistics query returned no rows");
+    return {
+      storedMatches: stringValue(row.stored_matches),
+      totalRecords: stringValue(row.total_records),
+    };
   });
 }
 
@@ -179,6 +197,7 @@ function mapMatchSummary(row: Record<string, JsonValue>): CatalogMatchSummary {
 function countsFromRow(row: Record<string, JsonValue>): ExtractionCounts {
   return {
     records: stringValue(row.records),
+    combatEvents: stringValue(row.combat_events),
     blobs: stringValue(row.blobs),
     entityInstances: stringValue(row.entity_instances),
     entityEvents: stringValue(row.entity_events),
@@ -228,12 +247,34 @@ function boundedInteger(name: string, value: number, minimum: number, maximum: n
 
 const COUNT_COLUMNS = `
   coalesce(json_extract_string(e.record_counts, '$.records'), '0') AS records,
+  coalesce(json_extract_string(e.record_counts, '$.combatEvents'), '0') AS combat_events,
   coalesce(json_extract_string(e.record_counts, '$.blobs'), '0') AS blobs,
   coalesce(json_extract_string(e.record_counts, '$.entityInstances'), '0') AS entity_instances,
   coalesce(json_extract_string(e.record_counts, '$.entityEvents'), '0') AS entity_events,
   coalesce(json_extract_string(e.record_counts, '$.propertyUpdates'), '0') AS property_updates,
   coalesce(json_extract_string(e.record_counts, '$.checkpoints'), '0') AS checkpoints,
   coalesce(json_extract_string(e.record_counts, '$.total'), '0') AS total`;
+
+const CATALOG_STATS_SQL = `
+WITH match_ids AS (
+  SELECT match_id FROM catalog.replay_acquisitions
+  UNION
+  SELECT match_id FROM catalog.extractions
+), latest_successful_extraction AS (
+  SELECT match_id, record_counts, row_number() OVER (
+    PARTITION BY match_id ORDER BY started_at DESC, extraction_id DESC
+  ) AS row_number
+  FROM catalog.extractions
+  WHERE status = 'succeeded'
+)
+SELECT
+  count(*)::VARCHAR AS stored_matches,
+  coalesce(sum(try_cast(
+    json_extract_string(extraction.record_counts, '$.total') AS UBIGINT
+  )), 0)::VARCHAR AS total_records
+FROM match_ids AS match
+LEFT JOIN latest_successful_extraction AS extraction
+  ON extraction.match_id = match.match_id AND extraction.row_number = 1`;
 
 const LIST_MATCHES_SQL = `
 WITH match_ids AS (

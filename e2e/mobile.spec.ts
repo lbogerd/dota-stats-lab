@@ -90,3 +90,24 @@ test("mobile user can browse data and manage a saved query", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "Saved queries" })).toBeVisible();
   await expect(page.getByText(`${renamedQuery}.sql`, { exact: true })).toHaveCount(0);
 });
+
+test("mobile user can open a real match overview", async ({ page }) => {
+  await page.goto("/matches");
+  await expect(page.getByRole("heading", { name: "Stored matches" })).toBeVisible();
+
+  const matchLink = page.locator('main a[href^="/matches/"]:visible').first();
+  await expect(matchLink, "ingest at least one replay before running browser tests").toBeVisible();
+  const href = await matchLink.getAttribute("href");
+  expect(href).toMatch(/^\/matches\/[1-9][0-9]*$/);
+  await matchLink.click();
+
+  await expect(page.locator("h1")).toHaveText(/^#[1-9][0-9]*$/);
+  await expect(page.getByText("Winning team:", { exact: false })).toBeVisible();
+  await expect(page.getByText("DuckDB analysis", { exact: true })).toBeVisible();
+  await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
+  await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();
+
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
+  expect(bodyWidth).toBeLessThanOrEqual(viewportWidth);
+});

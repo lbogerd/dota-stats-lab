@@ -8,3 +8,12 @@ export function parseMatchId(value: string | undefined): bigint {
   }
   return id;
 }
+
+export function isValidMatchId(value: string): boolean {
+  try {
+    parseMatchId(value);
+    return true;
+  } catch {
+    return false;
+  }
+}

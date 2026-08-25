@@ -14,9 +14,6 @@ importers:
       '@duckdb/node-api':
         specifier: 1.5.5-r.4
         version: 1.5.5-r.4
-      '@tanstack/pacer':
-        specifier: 0.22.0
-        version: 0.22.0
       '@tanstack/react-query':
         specifier: 5.101.4
         version: 5.101.4(react@19.2.8)
@@ -530,18 +527,9 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tanstack/devtools-event-client@0.5.0':
-    resolution: {integrity: sha512-H+OH3zC6Vhu/K0NaVfQKknEKawc/+2PT+D3SB3Ox0V8SiMlTo0abbmH2rH0721R2aNYbjdMXA1oENOd8E2UVoA==}
-    engines: {node: '>=18'}
-    hasBin: true
-
   '@tanstack/history@1.162.1':
     resolution: {integrity: sha512-DR9t6lfLVdrjgCwpglrR9DR7Ok8/HlXjcOE+goWXF3zyuLUO/ug7vMbSFxTqrQTtbRghJfyhmIZ0S6LhPIy44w==}
     engines: {node: '>=20.19'}
-
-  '@tanstack/pacer@0.22.0':
-    resolution: {integrity: sha512-Zq23KOn30tFiA6ZYWihs5x++ttHkOIcnIIjRrJq05tGrYx9+iHsmVaj8jb7UJVemEI+JRWGzJ9C+50YV4nRz0w==}
-    engines: {node: '>=18'}
 
   '@tanstack/query-core@5.101.4':
     resolution: {integrity: sha512-gNwcvOJcRbLWPOLG/2OBm+zM+Yv+MKsXKEOWC57USuZDEsI71hEErQsiEGx5wX9rzWWkfwM0fVSPoiIFSsxfiw==}
@@ -672,9 +660,6 @@ packages:
   '@tanstack/start-storage-context@1.167.28':
     resolution: {integrity: sha512-ZGl6bEXW5m77VVtWMt/naEBVoIeQkXYgF4UgiJM/3z3e1wbRzaoW7Dnc4HW+hoBPOOdfiVVNx31RT2ARnXWAiQ==}
     engines: {node: '>=22.12.0'}
-
-  '@tanstack/store@0.11.1':
-    resolution: {integrity: sha512-mzTOBhypOuDJAy/D8n2MfUZ1HFkXnmSETviRyhqEC8LUE7/IZQExOTxMANj3KjTofYTkFNpBY67qaVrT41YccA==}
 
   '@tanstack/store@0.9.3':
     resolution: {integrity: sha512-8reSzl/qGWGGVKhBoxXPMWzATSbZLZFWhwBAFO9NAyp0TxzfBP0mIrGb8CP8KrQTmvzXlR/vFPPUrHTLBGyFyw==}
@@ -1966,14 +1951,7 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.2.2(@types/node@22.15.3)(jiti@2.7.0)
 
-  '@tanstack/devtools-event-client@0.5.0': {}
-
   '@tanstack/history@1.162.1': {}
-
-  '@tanstack/pacer@0.22.0':
-    dependencies:
-      '@tanstack/devtools-event-client': 0.5.0
-      '@tanstack/store': 0.11.1
 
   '@tanstack/query-core@5.101.4': {}
 
@@ -2190,8 +2168,6 @@ snapshots:
   '@tanstack/start-storage-context@1.167.28':
     dependencies:
       '@tanstack/router-core': 1.171.26
-
-  '@tanstack/store@0.11.1': {}
 
   '@tanstack/store@0.9.3': {}
 

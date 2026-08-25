@@ -47,9 +47,12 @@ case "$command" in
       exit 2
     fi
     docker volume create dota-stats-replays >/dev/null
-    docker volume create dota-stats-warehouse >/dev/null
+    docker volume create dota-stats-warehouse-v2 >/dev/null
+    docker volume create dota-stats-staging >/dev/null
     docker volume create dota-stats-queries >/dev/null
-    echo "Created durable volumes dota-stats-replays, dota-stats-warehouse, and dota-stats-queries."
+    docker compose run --rm --no-deps staging-init >/dev/null
+    docker compose run --rm --no-deps warehouse-init >/dev/null
+    echo "Initialized replay, warehouse, staging, and saved-query storage."
     ;;
   ingest)
     require_match_id "$@"
@@ -67,8 +70,8 @@ case "$command" in
             echo "error: DOTA_REPLAY_SOURCE is not a regular file" >&2
             exit 2
           fi
-          if fetch_output=$(docker compose run --rm --no-deps -e MATCH_ID="$match_id" -e REPLAY_SOURCE=/input/replay.dem.bz2 \
-            -v "$DOTA_REPLAY_SOURCE:/input/replay.dem.bz2:ro" fetch); then :; else
+          if fetch_output=$(docker compose run --rm --no-deps -e MATCH_ID="$match_id" -e REPLAY_SOURCE=/input/replay.input \
+            -v "$DOTA_REPLAY_SOURCE:/input/replay.input:ro" fetch); then :; else
             fetch_status=$?; printf '%s\n' "$fetch_output"; exit "$fetch_status"
           fi
           ;;

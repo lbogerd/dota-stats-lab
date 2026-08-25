@@ -1,12 +1,14 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import type { JobStatus as ServerJobStatus } from "../jobs/job-files.js";
-import type { CatalogMatchDetail, CatalogMatchSummary } from "../server/catalog.js";
+import { isValidMatchId } from "../lib/match-id.js";
+import type { CatalogMatchDetail, CatalogMatchSummary, CatalogStats } from "../server/catalog.js";
 import type { SqlCatalog } from "../server/sql-catalog.js";
 import type { ReadOnlySqlResult } from "../server/warehouse.js";
 import type { SavedQuery } from "../server/saved-queries.js";
 import {
   deleteSavedQueryFn,
+  getCatalogStatsFn,
   getMatchDetailFn,
   getSqlCatalogFn,
   listJobsFn,
@@ -33,16 +35,18 @@ export interface Job {
 
 export type MatchSummary = CatalogMatchSummary;
 export type MatchDetail = CatalogMatchDetail;
+export type { CatalogStats };
 export type { SavedQuery };
 export type SqlResult = ReadOnlySqlResult;
 export type { SqlCatalog };
 
-export const matchIdSchema = z.string().regex(/^[1-9][0-9]{5,19}$/, "Enter a valid numeric match ID.");
+export const matchIdSchema = z.string().refine(isValidMatchId, "Enter a positive match ID in the DuckDB UBIGINT range.");
 export const queryNameSchema = z.string().min(1).max(48).regex(/^[a-z0-9_-]+$/, "Use lowercase letters, numbers, hyphens, or underscores.");
 
 export const queryKeys = {
   jobs: ["jobs"] as const,
   matches: ["matches"] as const,
+  catalogStats: ["catalog-stats"] as const,
   match: (matchId: string) => ["matches", matchId] as const,
   queries: ["saved-queries"] as const,
   query: (name: string) => ["saved-queries", name] as const,
@@ -68,6 +72,10 @@ export async function getJobs(): Promise<Job[]> {
 
 export async function getMatches(): Promise<MatchSummary[]> {
   return listMatchesFn();
+}
+
+export async function getCatalogStatistics(): Promise<CatalogStats> {
+  return getCatalogStatsFn();
 }
 
 export async function getMatch(matchId: string): Promise<MatchDetail | null> {
@@ -113,6 +121,7 @@ export const jobsQuery = () => queryOptions({
   refetchInterval: (query) => (query.state.data?.some((job) => !["succeeded", "failed"].includes(job.status)) ? 2_000 : false),
 });
 export const matchesQuery = () => queryOptions({ queryKey: queryKeys.matches, queryFn: getMatches });
+export const catalogStatsQuery = () => queryOptions({ queryKey: queryKeys.catalogStats, queryFn: getCatalogStatistics });
 export const matchQuery = (matchId: string) => queryOptions({ queryKey: queryKeys.match(matchId), queryFn: () => getMatch(matchId) });
 export const savedQueriesQuery = () => queryOptions({ queryKey: queryKeys.queries, queryFn: getSavedQueries });
 export const savedQueryQuery = (name: string) => queryOptions({ queryKey: queryKeys.query(name), queryFn: () => getSavedQuery(name) });
@@ -136,18 +145,6 @@ export function formatRelative(date: string): string {
   const hours = Math.round(minutes / 60);
   if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
   return formatter.format(Math.round(hours / 24), "day");
-}
-
-export function formatDuration(totalSeconds: number): string {
-  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-}
-
-export function formatBytes(bytes: number | string | null): string {
-  if (bytes === null) return "—";
-  const value = Number(bytes);
-  if (!Number.isFinite(value)) return "—";
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
-  return `${(value / 1_000_000).toFixed(1)} MB`;
 }
 
 export function formatCount(value: number | string): string {

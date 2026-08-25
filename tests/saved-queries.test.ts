@@ -52,17 +52,9 @@ test("save replaces an existing regular file and list returns current file data"
   assert.equal(listed.find(({ name }) => name === "z-last")?.sql, "SELECT 'new';");
 });
 
-test("read returns null for a missing query and download has safe response metadata", async () => {
+test("read returns null for a missing query", async () => {
   const { store } = await fixture();
   assert.equal(await store.read("missing"), null);
-  await assert.rejects(store.download("missing"), SavedQueryNotFoundError);
-
-  await store.save("download_me", "SELECT 42;");
-  assert.deepEqual(await store.download("download_me"), {
-    fileName: "download_me.sql",
-    contentType: "text/sql; charset=utf-8",
-    body: "SELECT 42;",
-  });
 });
 
 test("rename preserves SQL, refuses collisions, and handles no-op and missing sources", async () => {
@@ -117,7 +109,6 @@ test("store operations validate unsafe names before touching the filesystem", as
   await assert.rejects(store.read("../warehouse"), ZodError);
   await assert.rejects(store.save("query.sql", "SELECT 1"), ZodError);
   await assert.rejects(store.rename("valid", "../outside"), ZodError);
-  await assert.rejects(store.download("/etc/passwd"), ZodError);
   await assert.rejects(store.delete(".."), ZodError);
   await assert.rejects(readdir(root), /ENOENT/);
 });
