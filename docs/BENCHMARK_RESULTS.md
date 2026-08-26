@@ -1,6 +1,6 @@
 # Dota replay ingestion benchmark
 
-Generated: 2026-08-25T20:22:06Z
+Generated: 2026-08-26T11:41:01Z
 
 ## Environment
 
@@ -8,34 +8,61 @@ Generated: 2026-08-25T20:22:06Z
 - Memory: 31.1 GiB
 - Operating system: Ubuntu 24.04.4 LTS; kernel Linux 6.8.0-136-generic x86_64 GNU/Linux
 - Docker: 29.6.1; Compose: 5.3.1
-- Git revision: fb12fd151ab40df45e71f376060387ee06277325 (dirty)
+- Git revision: c50d4151b8c4a7b55f0a6ba0739369c84ac29968
 - Clarity fork: 11df6814e80b386a299aab3878ab34709d7e35f3
-- Export format: 1.3.0
+- Export format: 2.0.0
 - DuckDB Node API: 1.5.5-r.4
 
 ## Median measured results
 
 | Replay | Match | Runs | Duration | Replay | Preparation | Clarity | DuckDB writes | Summary | Complete | Peak RSS | Rows | Overview p95 | Ack |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| short | 8946228107 | 3 | 18:22 | 51.8 MiB | 0.10 s | 2.44 s | 0.90 s | 0.95 s | 5.69 s | 428.4 MiB | 53,058 | not measured | not measured |
-| normal | 8955653541 | 3 | 38:28 | 158.9 MiB | 0.24 s | 4.92 s | 1.30 s | 4.72 s | 13.64 s | 608.2 MiB | 147,852 | 79.64 ms | 61.28 ms |
-| large | 8946303764 | 3 | 55:27 | 170.7 MiB | 0.26 s | 5.95 s | 1.42 s | 11.06 s | 21.38 s | 644.5 MiB | 184,893 | 89.15 ms | not measured |
+| short | 8946228107 | 3 | 18:22 | 51.8 MiB | 0.10 s | 3.35 s | 0.94 s | 1.32 s | 7.44 s | 456.2 MiB | 156,600 | not measured | not measured |
+| normal | 8955653541 | 3 | 38:28 | 158.9 MiB | 0.27 s | 6.49 s | 1.38 s | 5.62 s | 16.57 s | 605.0 MiB | 356,018 | not measured | not measured |
+| large | 8946303764 | 3 | 55:27 | 170.7 MiB | 0.28 s | 7.69 s | 1.48 s | 11.87 s | 24.43 s | 682.9 MiB | 496,982 | not measured | not measured |
+
+## Hero position and heat-map measurements
+
+| Replay | Match | Positions | Stored | Position output | Total output | Warehouse | Cold heat map | Warm heat map | API response | Response |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| short | 8946228107 | 103,542 | 103,542 | 22.6 MiB (25.0%) | 90.4 MiB | 21.0 MiB | 8.46 ms | 12.41 ms | 66.35 ms | 45.0 KiB |
+| normal | 8955653541 | 208,166 | 208,166 | 45.7 MiB (18.3%) | 249.7 MiB | 36.5 MiB | 9.99 ms | 10.19 ms | 74.59 ms | 48.0 KiB |
+| large | 8946303764 | 312,089 | 312,089 | 68.7 MiB (22.5%) | 305.4 MiB | 45.0 MiB | 10.45 ms | 10.32 ms | 80.97 ms | 75.4 KiB |
+
+The exported and stored position counts are equal for all measured runs. The
+64 by 64 heat-map cell totals are also equal to the selected sample totals.
+The measurements use a 300-second range with 100 ms time precision.
+
+## Real-replay position validation
+
+The final parser was also checked with match `8943142948`. It exported 144,126
+position rows for all ten roster players. The file had 15,152 sample
+boundaries. No boundary had more than ten rows. The average was 9.512 rows per
+boundary; 13,585 boundaries had at least nine rows. There were no duplicate
+time and player keys.
+
+The Y axis was inverted only when the heat-map grid was made. Five observed
+respawns confirmed the image direction and fountain calibration:
+
+| Player | Team | Time | World position | Map location |
+|---:|---:|---:|---:|---|
+| 6 | Dire | 1:16.1 | (6902, 6420) | top-right Dire fountain |
+| 9 | Dire | 1:59.1 | (7036, 6312) | top-right Dire fountain |
+| 3 | Radiant | 4:44.7 | (-6700, -6700) | bottom-left Radiant fountain |
+| 2 | Radiant | 5:57.1 | (-6750, -6550) | bottom-left Radiant fountain |
+| 5 | Dire | 6:32.9 | (7076, 6359) | top-right Dire fountain |
+
+The strict mobile browser test targeted this extraction. It required the ready
+state, selected one hero, changed the range to `0:00.0` through `0:10.0`, and
+confirmed that the page did not exceed a 390-pixel viewport.
 
 ## Granular GPM measurements
 
 | Replay | Match | Gold events | Warehouse | Cold GPM | Warm GPM | 1s response | Max final GPM diff | Browser render p95 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| short | 8946228107 | 18,060 | 14.5 MiB | 63.02 ms | 44.10 ms | 418.1 KiB | 1.00 GPM | not measured |
-| normal | 8955653541 | 42,443 | 25.0 MiB | 94.08 ms | 74.99 ms | 916.1 KiB | 1.00 GPM | 954.27 ms |
-| large | 8946303764 | 64,451 | 28.5 MiB | 169.63 ms | 99.32 ms | 1338.0 KiB | 1.00 GPM | 982.28 ms |
-
-## Hero position and heat-map measurements
-
-This result set predates the 100 ms hero-position export. It has no position
-row, position-output, or heat-map query measurements. Run
-`./scripts/benchmark.sh` with the current parser and loader images to create
-these measurements. The benchmark report will keep the GPM measurements and
-checks in the preceding table.
+| short | 8946228107 | 18,060 | 21.0 MiB | 53.07 ms | 37.68 ms | 418.1 KiB | 1.00 GPM | not measured |
+| normal | 8955653541 | 42,443 | 36.5 MiB | 95.18 ms | 81.53 ms | 916.1 KiB | 1.00 GPM | not measured |
+| large | 8946303764 | 64,451 | 45.0 MiB | 163.27 ms | 106.52 ms | 1338.0 KiB | 1.00 GPM | not measured |
 
 ## Measurement boundaries and limitations
 
@@ -47,6 +74,9 @@ checks in the preceding table.
 - Peak RSS is the largest sum of process RSS observed with `docker top` in either ingestion container at 200 ms intervals; a narrow spike between samples may be missed.
 - The overview result uses one unmeasured warm request followed by 30 sequential loopback HTTP requests.
 - Warehouse size is the exact DuckDB file size after loading one match into a fresh database and before running GPM probes.
+- Position output is the exact byte size of `hero_positions.ndjson`; its percentage is its share of all exported NDJSON bytes.
+- Heat-map latency uses all heroes in a centered 300-second range on a 64 by 64 grid.
+- The API measurement includes a read-only connection, the availability query, the heat-map query, and response assembly.
 - Cold GPM is the first rolling-macro query on a new read-only DuckDB connection. Warm GPM is the median of repeated materialized queries on that same connection.
 - The GPM response size is the UTF-8 JSON byte length of the grouped 60-second-window response at a one-second output step.
 - The real-replay validation requires ten non-empty player series, two non-empty complete-team series, and five players per team when the match is at least as long as the selected window.
@@ -55,4 +85,5 @@ checks in the preceding table.
 - Acknowledgement is one browser measurement from activating the ingestion button until the queued or active job is visible. It mutates only the disposable benchmark job directory.
 - Container CPU and memory limits are part of the benchmark configuration recorded in the JSON report.
 
-Raw machine-readable results: `/home/xub/src/dota-stats-lab/benchmark-results/session-cleanup-20260825/results.json`
+The benchmark used three measured runs after one warm-up for each replay. Run
+`./scripts/benchmark.sh` to create a new machine-readable result set.

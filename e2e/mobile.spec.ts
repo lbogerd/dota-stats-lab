@@ -92,14 +92,20 @@ test("mobile user can browse data and manage a saved query", async ({ page }) =>
 });
 
 test("mobile user can open a real match overview", async ({ page }) => {
-  await page.goto("/matches");
-  await expect(page.getByRole("heading", { name: "Stored matches" })).toBeVisible();
+  const fixtureMatchId = process.env.E2E_MATCH_ID;
+  if (fixtureMatchId) {
+    expect(fixtureMatchId).toMatch(/^[1-9][0-9]*$/);
+    await page.goto(`/matches/${fixtureMatchId}`);
+  } else {
+    await page.goto("/matches");
+    await expect(page.getByRole("heading", { name: "Stored matches" })).toBeVisible();
 
-  const matchLink = page.locator('main a[href^="/matches/"]:visible').first();
-  await expect(matchLink, "ingest at least one replay before running browser tests").toBeVisible();
-  const href = await matchLink.getAttribute("href");
-  expect(href).toMatch(/^\/matches\/[1-9][0-9]*$/);
-  await matchLink.click();
+    const matchLink = page.locator('main a[href^="/matches/"]:visible').first();
+    await expect(matchLink, "ingest at least one replay before running browser tests").toBeVisible();
+    const href = await matchLink.getAttribute("href");
+    expect(href).toMatch(/^\/matches\/[1-9][0-9]*$/);
+    await matchLink.click();
+  }
 
   await expect(page.locator("h1")).toHaveText(/^#[1-9][0-9]*$/);
   await expect(page.getByText("Winning team:", { exact: false })).toBeVisible();
@@ -117,7 +123,11 @@ test("mobile user can open a real match overview", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Hero location heat map" })).toBeVisible();
   const heatmapReady = page.getByText(/Showing [0-9,]+ position samples from/);
   const heatmapUnavailable = page.getByText(/Hero position data is unavailable for this extraction/);
-  await expect(heatmapReady.or(heatmapUnavailable)).toBeVisible();
+  if (process.env.E2E_REQUIRE_HERO_POSITIONS === "1") {
+    await expect(heatmapReady).toBeVisible();
+  } else {
+    await expect(heatmapReady.or(heatmapUnavailable)).toBeVisible();
+  }
   if (await heatmapReady.isVisible()) {
     const heroSelect = page.getByLabel("Heat map hero");
     const heroOptions = heroSelect.locator("option");

@@ -81,7 +81,7 @@ pnpm check && pnpm build && pnpm test && pnpm test:web && sudo docker compose bu
 
 Docker is the supported way to run the complete application. Host development needs Node.js 22 and pnpm 10. It also needs explicit host paths for replays, staging data, the warehouse, migrations, and saved queries.
 
-The browser tests expect a healthy Compose web service. They also expect at least one stored match. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is a reference report from the current extraction format.
+The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state for that match. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is a reference report from the current extraction format.
 
 ## Architecture and ownership
 
