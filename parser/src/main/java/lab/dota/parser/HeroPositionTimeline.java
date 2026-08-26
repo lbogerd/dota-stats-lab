@@ -175,6 +175,7 @@ final class HeroPositionTimeline {
                 && directRoster.selectedHeroHandle != null
                 && !isNullHandle(directRoster.selectedHeroHandle)
                 && directRoster.selectedHeroHandle != hero.entityHandle) return null;
+        if (selectedPlayerId == null && !hasExplicitMainHeroClassification(hero)) return null;
         if (hero.lifeState == null || hero.lifeState != 0) return null;
         if (Boolean.TRUE.equals(hero.illusion) || Boolean.TRUE.equals(hero.clone)
                 || Boolean.TRUE.equals(hero.phantom)) return null;
@@ -193,6 +194,18 @@ final class HeroPositionTimeline {
         Double worldY = worldCoordinate(hero.cellY, hero.offsetY);
         if (!validWorldCoordinate(worldX) || !validWorldCoordinate(worldY)) return null;
         return new EligibleHero(hero.generation, gamePlayerId, heroId, teamId, worldX, worldY);
+    }
+
+    /**
+     * A player ID alone does not distinguish a main hero from a copy. If the
+     * selected-hero handle is unavailable, require the two copy fields that
+     * are present on current main hero entities to explicitly identify the
+     * entity as the original.
+     */
+    private static boolean hasExplicitMainHeroClassification(HeroState hero) {
+        return Boolean.FALSE.equals(hero.clone)
+                && hero.replicatingHandle != null
+                && isNullHandle(hero.replicatingHandle);
     }
 
     private Integer playerForSelectedHandle(long entityHandle) {

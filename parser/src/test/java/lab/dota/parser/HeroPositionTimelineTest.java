@@ -159,6 +159,33 @@ class HeroPositionTimelineTest {
         assertEquals(1.0, samples.get(0).worldX());
     }
 
+    @Test void failsClosedWhenSelectedHandleAndCopyClassificationAreUnknown() {
+        HeroPositionTimeline unknownBoth = completeHeroWithoutCopyClassification();
+        assertEquals(List.of(), unknownBoth.finishTick(0.0, 1));
+
+        HeroPositionTimeline unknownClone = completeHeroWithoutCopyClassification();
+        unknownClone.observeHeroProperty(1L, "m_hReplicatingOtherHeroModel", 16_777_215);
+        assertEquals(List.of(), unknownClone.finishTick(0.0, 1));
+
+        HeroPositionTimeline unknownReplication = completeHeroWithoutCopyClassification();
+        unknownReplication.observeHeroProperty(1L, "m_bIsClone", false);
+        assertEquals(List.of(), unknownReplication.finishTick(0.0, 1));
+
+        HeroPositionTimeline explicitlyMain = completeHeroWithoutCopyClassification();
+        explicitlyMain.observeHeroProperty(1L, "m_bIsClone", false);
+        explicitlyMain.observeHeroProperty(1L, "m_hReplicatingOtherHeroModel", 16_777_215);
+        assertEquals(1, explicitlyMain.finishTick(0.0, 1).size());
+    }
+
+    @Test void selectedHeroHandleIsSufficientWhenCopyClassificationIsUnknown() {
+        HeroPositionTimeline timeline = completeHeroWithoutCopyClassification();
+        timeline.observeRosterProperty("m_vecPlayerTeamData.0000.m_hSelectedHero", 1);
+        timeline.observeRosterProperty("m_vecPlayerTeamData.0000.m_nSelectedHeroID", 74);
+        timeline.observeRosterProperty("m_vecPlayerData.0000.m_iPlayerTeam", 2);
+
+        assertEquals(1, timeline.finishTick(0.0, 1).size());
+    }
+
     @Test void stopsAtTheLastBoundaryBeforeTheGameEndMarker() {
         HeroPositionTimeline timeline = new HeroPositionTimeline();
         addCompleteHero(timeline, 1L, 0, 74, 2,
@@ -204,6 +231,20 @@ class HeroPositionTimelineTest {
         timeline.observeHeroProperty(uid, "CBodyComponent.m_cellY", 128);
         timeline.observeHeroProperty(uid, "CBodyComponent.m_vecX", 1.0);
         timeline.observeHeroProperty(uid, "CBodyComponent.m_vecY", 2.0);
+    }
+
+    private static HeroPositionTimeline completeHeroWithoutCopyClassification() {
+        HeroPositionTimeline timeline = new HeroPositionTimeline();
+        timeline.onHeroCreated(1L, 1L);
+        timeline.observeHeroProperty(1L, "m_iPlayerID", 0);
+        timeline.observeHeroProperty(1L, "m_iHeroID", 74);
+        timeline.observeHeroProperty(1L, "m_iTeamNum", 2);
+        timeline.observeHeroProperty(1L, "m_lifeState", 0);
+        timeline.observeHeroProperty(1L, "CBodyComponent.m_cellX", 128);
+        timeline.observeHeroProperty(1L, "CBodyComponent.m_cellY", 128);
+        timeline.observeHeroProperty(1L, "CBodyComponent.m_vecX", 1.0);
+        timeline.observeHeroProperty(1L, "CBodyComponent.m_vecY", 2.0);
+        return timeline;
     }
 
     private static void addCompleteHero(HeroPositionTimeline timeline, long uid, int playerId,
