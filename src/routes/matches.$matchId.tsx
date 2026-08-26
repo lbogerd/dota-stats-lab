@@ -126,6 +126,7 @@ function MatchDetail() {
     />
 
     <HeroHeatmapSection
+      key={matchId}
       matchId={matchId}
       durationSeconds={summary.durationSeconds}
       players={match.players}
