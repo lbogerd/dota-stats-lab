@@ -1,3 +1,5 @@
+import itemCatalog from "./dota-items.generated.json";
+
 export interface DotaAsset {
   name: string;
   imageUrl: string | null;
@@ -60,64 +62,7 @@ const HEROES: Record<number, readonly [name: string, slug: string]> = {
   155: ["Largo", "largo"],
 };
 
-// Finished and commonly retained inventory items. IDs outside this map still
-// render as an explicit Item #ID fallback, including newly released items.
-const ITEMS: Record<number, readonly [name: string, slug: string]> = {
-  1: ["Blink Dagger", "blink"], 29: ["Boots of Speed", "boots"], 30: ["Gem of True Sight", "gem"],
-  36: ["Magic Wand", "magic_wand"], 37: ["Ghost Scepter", "ghost"], 41: ["Bottle", "bottle"],
-  42: ["Observer Ward", "ward_observer"], 43: ["Sentry Ward", "ward_sentry"],
-  46: ["Town Portal Scroll", "tpscroll"], 48: ["Boots of Travel", "travel_boots"],
-  50: ["Phase Boots", "phase_boots"], 63: ["Power Treads", "power_treads"],
-  65: ["Hand of Midas", "hand_of_midas"], 73: ["Bracer", "bracer"],
-  75: ["Wraith Band", "wraith_band"], 77: ["Null Talisman", "null_talisman"],
-  79: ["Mekansm", "mekansm"], 81: ["Vladmir's Offering", "vladmir"], 86: ["Buckler", "buckler"],
-  88: ["Ring of Basilius", "ring_of_basilius"], 90: ["Pipe of Insight", "pipe"],
-  92: ["Urn of Shadows", "urn_of_shadows"], 94: ["Headdress", "headdress"],
-  96: ["Scythe of Vyse", "sheepstick"], 98: ["Orchid Malevolence", "orchid"],
-  100: ["Eul's Scepter of Divinity", "cyclone"], 102: ["Force Staff", "force_staff"],
-  104: ["Dagon", "dagon"], 108: ["Aghanim's Scepter", "ultimate_scepter"],
-  110: ["Refresher Orb", "refresher"], 112: ["Assault Cuirass", "assault"],
-  114: ["Heart of Tarrasque", "heart"], 116: ["Black King Bar", "black_king_bar"],
-  117: ["Aegis of the Immortal", "aegis"], 119: ["Shiva's Guard", "shivas_guard"],
-  121: ["Bloodstone", "bloodstone"], 123: ["Linken's Sphere", "sphere"],
-  125: ["Vanguard", "vanguard"], 127: ["Blade Mail", "blade_mail"],
-  131: ["Hood of Defiance", "hood_of_defiance"], 133: ["Divine Rapier", "rapier"],
-  135: ["Monkey King Bar", "monkey_king_bar"], 137: ["Radiance", "radiance"],
-  139: ["Butterfly", "butterfly"], 141: ["Daedalus", "greater_crit"],
-  143: ["Skull Basher", "basher"], 145: ["Battle Fury", "bfury"], 147: ["Manta Style", "manta"],
-  149: ["Crystalys", "lesser_crit"], 151: ["Armlet of Mordiggian", "armlet"],
-  152: ["Shadow Blade", "invis_sword"], 154: ["Sange and Yasha", "sange_and_yasha"],
-  156: ["Satanic", "satanic"], 158: ["Mjollnir", "mjollnir"], 160: ["Eye of Skadi", "skadi"],
-  162: ["Sange", "sange"], 164: ["Helm of the Dominator", "helm_of_the_dominator"],
-  166: ["Maelstrom", "maelstrom"], 168: ["Desolator", "desolator"], 170: ["Yasha", "yasha"],
-  172: ["Mask of Madness", "mask_of_madness"], 174: ["Diffusal Blade", "diffusal_blade"],
-  176: ["Ethereal Blade", "ethereal_blade"], 178: ["Soul Ring", "soul_ring"],
-  180: ["Arcane Boots", "arcane_boots"], 185: ["Drum of Endurance", "ancient_janggo"],
-  187: ["Medallion of Courage", "medallion_of_courage"], 190: ["Veil of Discord", "veil_of_discord"],
-  206: ["Rod of Atos", "rod_of_atos"], 208: ["Abyssal Blade", "abyssal_blade"],
-  210: ["Heaven's Halberd", "heavens_halberd"], 214: ["Tranquil Boots", "tranquil_boots"],
-  220: ["Boots of Travel 2", "travel_boots_2"], 223: ["Meteor Hammer", "meteor_hammer"],
-  225: ["Nullifier", "nullifier"], 226: ["Lotus Orb", "lotus_orb"], 229: ["Solar Crest", "solar_crest"],
-  231: ["Guardian Greaves", "guardian_greaves"], 232: ["Aether Lens", "aether_lens"],
-  235: ["Octarine Core", "octarine_core"], 236: ["Dragon Lance", "dragon_lance"],
-  242: ["Crimson Guard", "crimson_guard"], 247: ["Moon Shard", "moon_shard"],
-  249: ["Silver Edge", "silver_edge"], 250: ["Bloodthorn", "bloodthorn"],
-  252: ["Echo Sabre", "echo_sabre"], 254: ["Glimmer Cape", "glimmer_cape"], 256: ["Aeon Disk", "aeon_disk"],
-  259: ["Kaya", "kaya"], 260: ["Refresher Shard", "refresher_shard"],
-  263: ["Hurricane Pike", "hurricane_pike"], 267: ["Spirit Vessel", "spirit_vessel"],
-  269: ["Holy Locket", "holy_locket"], 271: ["Aghanim's Blessing", "ultimate_scepter_2"],
-  273: ["Kaya and Sange", "kaya_and_sange"], 277: ["Yasha and Kaya", "yasha_and_kaya"],
-  534: ["Witch Blade", "witch_blade"], 569: ["Orb of Corrosion", "orb_of_corrosion"],
-  596: ["Falcon Blade", "falcon_blade"], 598: ["Mage Slayer", "mage_slayer"],
-  600: ["Overwhelming Blink", "overwhelming_blink"], 603: ["Swift Blink", "swift_blink"],
-  604: ["Arcane Blink", "arcane_blink"], 609: ["Aghanim's Shard", "aghanims_shard"],
-  610: ["Wind Waker", "wind_waker"], 635: ["Helm of the Overlord", "helm_of_the_overlord"],
-  692: ["Eternal Shroud", "eternal_shroud"], 911: ["Revenant's Brooch", "revenants_brooch"],
-  931: ["Boots of Bearing", "boots_of_bearing"], 939: ["Harpoon", "harpoon"],
-  1097: ["Disperser", "disperser"], 1107: ["Phylactery", "phylactery"],
-  1128: ["Pavise", "pavise"], 1466: ["Gleipnir", "gungir"],
-  1806: ["Parasma", "devastator"], 1808: ["Khanda", "angels_demise"],
-};
+const ITEMS = new Map(itemCatalog.items.map((item) => [item.id, item]));
 
 export function heroAsset(heroId: number | null): DotaAsset {
   if (heroId === null || HEROES[heroId] === undefined) {
@@ -128,9 +73,9 @@ export function heroAsset(heroId: number | null): DotaAsset {
 }
 
 export function itemAsset(itemId: number | null): DotaAsset {
-  if (itemId === null || ITEMS[itemId] === undefined) {
+  const item = itemId === null ? undefined : ITEMS.get(itemId);
+  if (item === undefined) {
     return { name: itemId === null ? "Unknown item" : `Item #${itemId}`, imageUrl: null };
   }
-  const [name, slug] = ITEMS[itemId];
-  return { name, imageUrl: `${CDN_ROOT}/items/${slug}.png` };
+  return { name: item.name, imageUrl: `${CDN_ROOT}/items/${item.imageSlug}.png` };
 }
