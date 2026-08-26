@@ -47,6 +47,32 @@ test("validateManifest accepts the fixed staged-file contract", async () => {
   assert.equal((await validateManifest(dir, 42n)).matchId, "42");
 });
 
+test("validateManifest accepts schema version 2 with hero positions", async () => {
+  const { dir, manifest } = await fixture();
+  manifest.schemaVersion = 2;
+  await setStagedFile(
+    dir,
+    manifest,
+    "heroPositions",
+    `${JSON.stringify({ gameTimeMilliseconds: 100 })}\n`,
+    1,
+  );
+
+  const result = await validateManifest(dir, 42n);
+  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.files.heroPositions?.records, 1);
+});
+
+test("validateManifest recovers a schema version 1 manifest without hero positions", async () => {
+  const { dir, manifest } = await fixture();
+  delete (manifest.files as Record<string, unknown>).heroPositions;
+  await writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+
+  const result = await validateManifest(dir, 42n);
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.files.heroPositions, undefined);
+});
+
 test("validateManifest accepts checksums, bytes, and records from one staged file", async () => {
   const { dir, manifest } = await fixture();
   (manifest.config as Record<string, unknown>).maxOutputBytes = 100;
@@ -92,6 +118,22 @@ test("validateManifest rejects a record count mismatch", async () => {
   await setStagedFile(dir, manifest, "records", "one\ntwo\n", 1);
 
   await assert.rejects(validateManifest(dir, 42n), /Record count mismatch for records\.ndjson/);
+});
+
+test("validateManifest checks the hero position checksum, size, and row count", async () => {
+  const { dir, manifest } = await fixture();
+  manifest.schemaVersion = 2;
+  await setStagedFile(dir, manifest, "heroPositions", "one\ntwo\n", 2);
+  await writeFile(path.join(dir, stagedFiles.heroPositions), "one\nxxxx\n");
+  await assert.rejects(validateManifest(dir, 42n), /Size mismatch for hero_positions\.ndjson/);
+
+  await setStagedFile(dir, manifest, "heroPositions", "one\ntwo\n", 2);
+  (manifest.files as Record<string, Record<string, unknown>>).heroPositions!.sha256 = "d".repeat(64);
+  await writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+  await assert.rejects(validateManifest(dir, 42n), /Checksum mismatch for hero_positions\.ndjson/);
+
+  await setStagedFile(dir, manifest, "heroPositions", "one\ntwo\n", 1);
+  await assert.rejects(validateManifest(dir, 42n), /Record count mismatch for hero_positions\.ndjson/);
 });
 
 test("validateManifest rejects a non-empty file without a final newline", async () => {
