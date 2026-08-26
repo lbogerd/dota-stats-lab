@@ -60,7 +60,19 @@ async function main(): Promise<void> {
     await runParserWorker();
     return;
   }
-  throw new Error("Usage: cli/index.js fetch|check|load|sql|migrate|init-staging|parser-worker");
+  if (command === "sampler") {
+    const [{ loadSamplerConfig }, { RankedMatchSampler }] = await Promise.all([
+      import("../sampler/config.js"),
+      import("../sampler/service.js"),
+    ]);
+    const abortController = new AbortController();
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      process.once(signal, () => abortController.abort());
+    }
+    await new RankedMatchSampler({ config: loadSamplerConfig() }).run(abortController.signal);
+    return;
+  }
+  throw new Error("Usage: cli/index.js fetch|check|load|sql|migrate|init-staging|parser-worker|sampler");
 }
 
 main().catch((error: unknown) => {

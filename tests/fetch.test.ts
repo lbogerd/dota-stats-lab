@@ -43,6 +43,25 @@ test("uncompressed replay content is published as .dem regardless of input filen
   await assert.rejects(stat(path.join(process.env.REPLAY_ROOT!, "2", "replay.dem.bz2")), /ENOENT/);
 });
 
+test("sampled acquisitions store the selection metadata for the parser manifest", async () => {
+  const source = path.join(directory, "sampled.dem.bz2");
+  await writeFile(source, compressedReplay);
+  const sampling = {
+    windowStart: "2026-08-26T10:00:00.000Z",
+    selectionGroup: "priority" as const,
+    avgRankTier: 82,
+    source: "opendota-public-matches",
+    samplingVersion: "ranked-v1",
+  };
+  const acquisition = await fetchReplay(13n, source, sampling);
+  assert.deepEqual(acquisition.sampling, sampling);
+  const stored = JSON.parse(await readFile(
+    path.join(process.env.REPLAY_ROOT!, "13", "acquisition.json"),
+    "utf8",
+  ));
+  assert.deepEqual(stored.sampling, sampling);
+});
+
 test("direct-file acquisition enforces the replay size limit", async () => {
   const source = path.join(directory, "large.dem.bz2");
   await writeFile(source, Buffer.concat([Buffer.from("BZh"), Buffer.alloc(62)]));

@@ -44,6 +44,27 @@ test("loader imports atomically, supports analysis macros, and is idempotent", a
 
   assert.equal((await loadClaimedExtraction(await stage(extractionId, goodRows))).status, "already_loaded");
   assert.equal(await extractionAlreadyLoaded(matchId, replaySha256), true);
+
+  const sampling = {
+    windowStart: "2026-08-26T09:00:00.000Z",
+    selectionGroup: "control" as const,
+    source: "opendota-public-matches",
+    samplingVersion: "ranked-v1-existing",
+  };
+  assert.equal(await extractionAlreadyLoaded(matchId, replaySha256, sampling), true);
+  const auditInstance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const auditConnection = await auditInstance.connect();
+  try {
+    const audit = await auditConnection.runAndReadAll(
+      `SELECT selection_group, extraction_id FROM catalog.match_selections
+       WHERE match_id = $matchId AND sampling_version = $version`,
+      { matchId, version: sampling.samplingVersion },
+    );
+    assert.deepEqual(audit.getRowObjectsJson(), [{ selection_group: "control", extraction_id: extractionId }]);
+  } finally {
+    auditConnection.closeSync();
+    auditInstance.closeSync();
+  }
 });
 
 test("preflight and storage distinguish parser identities for the same replay", async () => {
@@ -71,6 +92,53 @@ test("preflight and storage distinguish parser identities for the same replay", 
       { matchId: identityMatchId, sha: replaySha256 },
     );
     assert.deepEqual(result.getRowObjectsJson(), [{ n: 2 }]);
+  } finally { connection.closeSync(); }
+});
+
+test("loader records sampled-match metadata in the same warehouse transaction", async () => {
+  const sampledMatchId = 46n;
+  const sampledExtractionId = "9".repeat(64);
+  const rows = Object.fromEntries(Object.entries(goodRows).map(
+    ([name, body]) => [name, body.replaceAll(extractionId, sampledExtractionId)],
+  ));
+  await loadClaimedExtraction(await stage(sampledExtractionId, rows, sampledMatchId, {
+    acquisition: {
+      schemaVersion: 1,
+      matchId: sampledMatchId.toString(),
+      status: "available",
+      source: "opendota",
+      replaySha256,
+      replayBytes: 123,
+      acquiredAt: "2026-08-26T10:20:00.000Z",
+      sampling: {
+        windowStart: "2026-08-26T10:00:00.000Z",
+        selectionGroup: "priority",
+        avgRankTier: 81,
+        source: "opendota-public-matches",
+        samplingVersion: "ranked-v1",
+      },
+    },
+  }));
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(
+      `SELECT match_id::VARCHAR AS match_id, window_start::VARCHAR AS window_start,
+         selection_group, avg_rank_tier::INTEGER AS avg_rank_tier, source,
+         sampling_version, extraction_id
+       FROM catalog.match_selections WHERE match_id = $matchId`,
+      { matchId: sampledMatchId },
+    );
+    assert.deepEqual(result.getRowObjectsJson(), [{
+      match_id: sampledMatchId.toString(),
+      window_start: "2026-08-26 10:00:00+00",
+      selection_group: "priority",
+      avg_rank_tier: 81,
+      source: "opendota-public-matches",
+      sampling_version: "ranked-v1",
+      extraction_id: sampledExtractionId,
+    }]);
   } finally { connection.closeSync(); }
 });
 
@@ -402,6 +470,7 @@ async function stage(
   identity: {
     parser?: { name: string; version: string; upstreamRelease?: string; forkRevision?: string };
     exporterVersion?: string;
+    acquisition?: Record<string, unknown>;
   } = {},
 ): Promise<{
   matchId: bigint;
@@ -434,6 +503,7 @@ async function stage(
     exporterVersion: identity.exporterVersion ?? parserIdentity.exporterVersion,
     config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 12_884_901_888, maxRecords: 50_000_000, timeoutSeconds: 1_800 },
     startedAt: now, completedAt: now, elapsedMs: 1, files, counts: {},
+    ...(identity.acquisition === undefined ? {} : { acquisition: identity.acquisition }),
   }));
   return { matchId: stagedMatchId, claimId, extractionId: id, directory };
 }

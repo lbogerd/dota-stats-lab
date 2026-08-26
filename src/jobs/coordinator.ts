@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { paths, replayDir } from "../config.js";
 import { fetchReplay, type Acquisition } from "../fetch/fetch-replay.js";
+import { deleteReplayAfterSuccess } from "../fetch/replay-cleanup.js";
 import { loadClaimedExtraction, type LoadResult } from "../load/load-extraction.js";
 import type { Manifest } from "../load/manifest.js";
 import { extractionAlreadyLoaded } from "../load/preflight.js";
@@ -17,22 +18,31 @@ import {
   readJobStatus,
   readParseResult,
   updateJobStatus,
+  updateReplayCleanup,
   writeParseRequest,
+  type IngestionJobOptions,
+  type IngestionRequest,
   type JobStatus,
+  type SamplingMetadata,
 } from "./job-files.js";
 import { claimExtraction, type ClaimedExtraction } from "./extraction-claim.js";
 import { inspectClaimedExtraction } from "./parser-output.js";
 
 export type CoordinatorDependencies = {
-  fetch: (matchId: bigint) => Promise<Acquisition>;
-  alreadyLoaded: (matchId: bigint, replaySha256: string | undefined) => Promise<boolean>;
+  fetch: (matchId: bigint, sampling?: SamplingMetadata) => Promise<Acquisition>;
+  alreadyLoaded: (
+    matchId: bigint,
+    replaySha256: string | undefined,
+    sampling?: SamplingMetadata,
+  ) => Promise<boolean>;
   claim: (claimId: string, matchId: bigint, extractionId: string) => Promise<ClaimedExtraction>;
   inspect: (claimed: ClaimedExtraction) => Promise<Manifest>;
   load: (claimed: ClaimedExtraction) => Promise<LoadResult>;
+  cleanupReplay: (matchId: bigint) => Promise<void>;
 };
 
 const defaultDependencies: CoordinatorDependencies = {
-  fetch: fetchReplay,
+  fetch: (matchId, sampling) => fetchReplay(matchId, undefined, sampling),
   alreadyLoaded: extractionAlreadyLoaded,
   claim: (claimId, matchId, extractionId) => claimExtraction({
     claimId,
@@ -43,6 +53,7 @@ const defaultDependencies: CoordinatorDependencies = {
   }),
   inspect: inspectClaimedExtraction,
   load: loadClaimedExtraction,
+  cleanupReplay: deleteReplayAfterSuccess,
 };
 
 export class IngestionCoordinator {
@@ -63,8 +74,8 @@ export class IngestionCoordinator {
     this.#dependencies = { ...defaultDependencies, ...options.dependencies };
   }
 
-  async enqueue(matchId: bigint): Promise<JobStatus> {
-    return createIngestionJob(matchId, this.#jobsRoot);
+  async enqueue(matchId: bigint, options: IngestionJobOptions = {}): Promise<JobStatus> {
+    return createIngestionJob(matchId, this.#jobsRoot, options);
   }
 
   async get(jobId: string): Promise<JobStatus> {
@@ -108,6 +119,11 @@ export class IngestionCoordinator {
         } satisfies JobStatus);
       }
     }
+    for (const status of await listJobStatuses(this.#jobsRoot)) {
+      if (status.state === "succeeded" && status.replayCleanup === undefined) {
+        await this.#attemptReplayCleanup(status);
+      }
+    }
   }
 
   async tick(): Promise<void> {
@@ -120,6 +136,10 @@ export class IngestionCoordinator {
         await this.recover();
         statuses = await listJobStatuses(this.#jobsRoot);
       }
+      const cleanupRetry = statuses.find((status) => status.state === "succeeded"
+        && status.replayCleanup?.state === "failed"
+        && Date.now() - Date.parse(status.replayCleanup.attemptedAt) >= 60_000);
+      if (cleanupRetry !== undefined) await this.#attemptReplayCleanup(cleanupRetry);
       const active = statuses.find((status) => status.state !== "succeeded" && status.state !== "failed");
       if (active !== undefined) await this.#advance(active);
     } finally { this.#busy = false; }
@@ -137,19 +157,20 @@ export class IngestionCoordinator {
 
   async #advance(status: JobStatus): Promise<void> {
     const matchId = parseMatchId(status.matchId);
+    const request = await readIngestionRequest(status.jobId, this.#jobsRoot);
     if (status.state === "queued") {
       await updateJobStatus(status, "fetching", {}, this.#jobsRoot);
       return;
     }
     if (status.state === "fetching") {
       try {
-        const acquisition = await this.#dependencies.fetch(matchId);
+        const acquisition = await this.#dependencies.fetch(matchId, request.sampling);
         if (acquisition.status !== "available" || acquisition.replaySha256 === undefined) {
           await this.#fail(status, "fetching", acquisition.error ?? "Replay is unavailable");
           return;
         }
-        if (await this.#dependencies.alreadyLoaded(matchId, acquisition.replaySha256)) {
-          await updateJobStatus(status, "succeeded", { result: "already_loaded" }, this.#jobsRoot);
+        if (await this.#dependencies.alreadyLoaded(matchId, acquisition.replaySha256, request.sampling)) {
+          await this.#complete(status, request, { result: "already_loaded" });
           return;
         }
         const parsing = await updateJobStatus(status, "parsing", {}, this.#jobsRoot);
@@ -191,17 +212,50 @@ export class IngestionCoordinator {
       try {
         if (status.extractionId === undefined) throw new Error("Loading job does not have an extraction ID");
         const acquisition = await readAcquisition(matchId);
-        if (await this.#dependencies.alreadyLoaded(matchId, acquisition.replaySha256)) {
-          await updateJobStatus(status, "succeeded", {
+        if (await this.#dependencies.alreadyLoaded(matchId, acquisition.replaySha256, request.sampling)) {
+          await this.#complete(status, request, {
             extractionId: status.extractionId,
             result: "already_loaded",
-          }, this.#jobsRoot);
+          });
           return;
         }
         const claimed = await this.#dependencies.claim(status.jobId, matchId, status.extractionId);
         const loaded = await this.#dependencies.load(claimed);
-        await updateJobStatus(status, "succeeded", { extractionId: loaded.extractionId, result: loaded.status }, this.#jobsRoot);
+        await this.#complete(status, request, { extractionId: loaded.extractionId, result: loaded.status });
       } catch (error) { await this.#fail(status, "loading", errorMessage(error)); }
+    }
+  }
+
+  async #complete(
+    status: JobStatus,
+    request: IngestionRequest,
+    details: Pick<JobStatus, "extractionId" | "result">,
+  ): Promise<void> {
+    const succeeded = await updateJobStatus(status, "succeeded", details, this.#jobsRoot);
+    await this.#attemptReplayCleanup(succeeded, request);
+  }
+
+  async #attemptReplayCleanup(status: JobStatus, knownRequest?: IngestionRequest): Promise<void> {
+    let request: IngestionRequest;
+    try { request = knownRequest ?? await readIngestionRequest(status.jobId, this.#jobsRoot); }
+    catch (error) {
+      logCleanupFailure(status, `Cannot read job request: ${errorMessage(error)}`);
+      return;
+    }
+    if (request.deleteReplayAfterSuccess !== true) return;
+    const attemptedAt = new Date().toISOString();
+    try {
+      await this.#dependencies.cleanupReplay(parseMatchId(status.matchId));
+      await updateReplayCleanup(status, { state: "succeeded", attemptedAt }, this.#jobsRoot);
+    } catch (error) {
+      const message = errorMessage(error);
+      try {
+        await updateReplayCleanup(status, { state: "failed", attemptedAt, error: message }, this.#jobsRoot);
+      } catch (statusError) {
+        logCleanupFailure(status, `${message}; cannot record cleanup status: ${errorMessage(statusError)}`);
+        return;
+      }
+      logCleanupFailure(status, message);
     }
   }
 
@@ -222,6 +276,16 @@ export class IngestionCoordinator {
   async #fail(status: JobStatus, stage: "fetching" | "parsing" | "loading", message: string): Promise<void> {
     await updateJobStatus(status, "failed", { error: { stage, message } }, this.#jobsRoot);
   }
+}
+
+function logCleanupFailure(status: JobStatus, message: string): void {
+  process.stderr.write(`${JSON.stringify({
+    level: "error",
+    event: "replay_cleanup_failed",
+    jobId: status.jobId,
+    matchId: status.matchId,
+    message,
+  })}\n`);
 }
 
 async function readAcquisition(matchId: bigint): Promise<{ replaySha256: string }> {

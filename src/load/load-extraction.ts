@@ -5,8 +5,10 @@ import { paths } from "../config.js";
 import { migrate, openWarehouse } from "../db/database.js";
 import { withWarehouseLock } from "../db/lock.js";
 import type { ClaimedExtraction } from "../jobs/extraction-claim.js";
+import { validateSamplingMetadata } from "../jobs/job-files.js";
 import { jsonStringify } from "../lib/json.js";
 import { stagedFiles, validateManifest, type Manifest } from "./manifest.js";
+import { upsertMatchSelection } from "./match-selection.js";
 import {
   REJECTED_ENTITY_CLASSES,
   REJECTED_RECORD_TYPES,
@@ -127,6 +129,7 @@ function validateAcquisition(manifest: Manifest): Record<string, unknown> {
   if (acquisition.replaySha256 !== undefined && acquisition.replaySha256 !== manifest.replaySha256) {
     throw new Error("Acquisition and manifest replay checksums differ");
   }
+  if (acquisition.sampling !== undefined) validateSamplingMetadata(acquisition.sampling);
   return acquisition;
 }
 
@@ -180,6 +183,14 @@ async function insertCatalog(connection: DuckDBConnection, manifest: Manifest, a
       counts: jsonStringify({}), manifest: jsonStringify(manifest),
     },
   );
+  if (acquisition.sampling !== undefined) {
+    await upsertMatchSelection(
+      connection,
+      BigInt(manifest.matchId),
+      manifest.extractionId,
+      validateSamplingMetadata(acquisition.sampling),
+    );
+  }
 }
 
 async function importStagedFiles(connection: DuckDBConnection, dir: string, manifest: Manifest): Promise<void> {

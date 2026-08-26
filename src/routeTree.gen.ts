@@ -15,10 +15,13 @@ import { Route as HeroesRouteImport } from './routes/heroes'
 import { Route as IngestRouteImport } from './routes/ingest'
 import { Route as MatchesRouteImport } from './routes/matches'
 import { Route as QueriesRouteImport } from './routes/queries'
+import { Route as HealthSamplerRouteImport } from './routes/health.sampler'
 import { Route as MatchesIndexRouteImport } from './routes/matches.index'
 import { Route as MatchesMatchIdRouteImport } from './routes/matches.$matchId'
+import { Route as OperationsSamplerRouteImport } from './routes/operations.sampler'
 import { Route as QueriesIndexRouteImport } from './routes/queries.index'
 import { Route as QueriesQueryNameRouteImport } from './routes/queries.$queryName'
+import { Route as ApiSamplerStatusRouteImport } from './routes/api.sampler.status'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -50,6 +53,11 @@ const QueriesRoute = QueriesRouteImport.update({
   path: '/queries',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HealthSamplerRoute = HealthSamplerRouteImport.update({
+  id: '/sampler',
+  path: '/sampler',
+  getParentRoute: () => HealthRoute,
+} as any)
 const MatchesIndexRoute = MatchesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -59,6 +67,11 @@ const MatchesMatchIdRoute = MatchesMatchIdRouteImport.update({
   id: '/$matchId',
   path: '/$matchId',
   getParentRoute: () => MatchesRoute,
+} as any)
+const OperationsSamplerRoute = OperationsSamplerRouteImport.update({
+  id: '/operations/sampler',
+  path: '/operations/sampler',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const QueriesIndexRoute = QueriesIndexRouteImport.update({
   id: '/',
@@ -70,41 +83,55 @@ const QueriesQueryNameRoute = QueriesQueryNameRouteImport.update({
   path: '/$queryName',
   getParentRoute: () => QueriesRoute,
 } as any)
+const ApiSamplerStatusRoute = ApiSamplerStatusRouteImport.update({
+  id: '/api/sampler/status',
+  path: '/api/sampler/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/health': typeof HealthRoute
+  '/health': typeof HealthRouteWithChildren
   '/heroes': typeof HeroesRoute
   '/ingest': typeof IngestRoute
   '/matches': typeof MatchesRouteWithChildren
   '/queries': typeof QueriesRouteWithChildren
+  '/health/sampler': typeof HealthSamplerRoute
   '/matches/$matchId': typeof MatchesMatchIdRoute
+  '/operations/sampler': typeof OperationsSamplerRoute
   '/queries/$queryName': typeof QueriesQueryNameRoute
   '/matches/': typeof MatchesIndexRoute
   '/queries/': typeof QueriesIndexRoute
+  '/api/sampler/status': typeof ApiSamplerStatusRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/health': typeof HealthRoute
+  '/health': typeof HealthRouteWithChildren
   '/heroes': typeof HeroesRoute
   '/ingest': typeof IngestRoute
+  '/health/sampler': typeof HealthSamplerRoute
   '/matches/$matchId': typeof MatchesMatchIdRoute
+  '/operations/sampler': typeof OperationsSamplerRoute
   '/queries/$queryName': typeof QueriesQueryNameRoute
   '/matches': typeof MatchesIndexRoute
   '/queries': typeof QueriesIndexRoute
+  '/api/sampler/status': typeof ApiSamplerStatusRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/health': typeof HealthRoute
+  '/health': typeof HealthRouteWithChildren
   '/heroes': typeof HeroesRoute
   '/ingest': typeof IngestRoute
   '/matches': typeof MatchesRouteWithChildren
   '/queries': typeof QueriesRouteWithChildren
+  '/health/sampler': typeof HealthSamplerRoute
   '/matches/$matchId': typeof MatchesMatchIdRoute
+  '/operations/sampler': typeof OperationsSamplerRoute
   '/queries/$queryName': typeof QueriesQueryNameRoute
   '/matches/': typeof MatchesIndexRoute
   '/queries/': typeof QueriesIndexRoute
+  '/api/sampler/status': typeof ApiSamplerStatusRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -115,20 +142,26 @@ export interface FileRouteTypes {
     | '/ingest'
     | '/matches'
     | '/queries'
+    | '/health/sampler'
     | '/matches/$matchId'
+    | '/operations/sampler'
     | '/queries/$queryName'
     | '/matches/'
     | '/queries/'
+    | '/api/sampler/status'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/health'
     | '/heroes'
     | '/ingest'
+    | '/health/sampler'
     | '/matches/$matchId'
+    | '/operations/sampler'
     | '/queries/$queryName'
     | '/matches'
     | '/queries'
+    | '/api/sampler/status'
   id:
     | '__root__'
     | '/'
@@ -137,19 +170,24 @@ export interface FileRouteTypes {
     | '/ingest'
     | '/matches'
     | '/queries'
+    | '/health/sampler'
     | '/matches/$matchId'
+    | '/operations/sampler'
     | '/queries/$queryName'
     | '/matches/'
     | '/queries/'
+    | '/api/sampler/status'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  HealthRoute: typeof HealthRoute
+  HealthRoute: typeof HealthRouteWithChildren
   HeroesRoute: typeof HeroesRoute
   IngestRoute: typeof IngestRoute
   MatchesRoute: typeof MatchesRouteWithChildren
   QueriesRoute: typeof QueriesRouteWithChildren
+  OperationsSamplerRoute: typeof OperationsSamplerRoute
+  ApiSamplerStatusRoute: typeof ApiSamplerStatusRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -196,6 +234,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof QueriesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/health/sampler': {
+      id: '/health/sampler'
+      path: '/sampler'
+      fullPath: '/health/sampler'
+      preLoaderRoute: typeof HealthSamplerRouteImport
+      parentRoute: typeof HealthRoute
+    }
     '/matches/': {
       id: '/matches/'
       path: '/'
@@ -209,6 +254,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/matches/$matchId'
       preLoaderRoute: typeof MatchesMatchIdRouteImport
       parentRoute: typeof MatchesRoute
+    }
+    '/operations/sampler': {
+      id: '/operations/sampler'
+      path: '/operations/sampler'
+      fullPath: '/operations/sampler'
+      preLoaderRoute: typeof OperationsSamplerRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/queries/': {
       id: '/queries/'
@@ -224,8 +276,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof QueriesQueryNameRouteImport
       parentRoute: typeof QueriesRoute
     }
+    '/api/sampler/status': {
+      id: '/api/sampler/status'
+      path: '/api/sampler/status'
+      fullPath: '/api/sampler/status'
+      preLoaderRoute: typeof ApiSamplerStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
+
+interface HealthRouteChildren {
+  HealthSamplerRoute: typeof HealthSamplerRoute
+}
+
+const HealthRouteChildren: HealthRouteChildren = {
+  HealthSamplerRoute: HealthSamplerRoute,
+}
+
+const HealthRouteWithChildren =
+  HealthRoute._addFileChildren(HealthRouteChildren)
 
 interface MatchesRouteChildren {
   MatchesMatchIdRoute: typeof MatchesMatchIdRoute
@@ -255,11 +325,13 @@ const QueriesRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  HealthRoute: HealthRoute,
+  HealthRoute: HealthRouteWithChildren,
   HeroesRoute: HeroesRoute,
   IngestRoute: IngestRoute,
   MatchesRoute: MatchesRouteWithChildren,
   QueriesRoute: QueriesRouteWithChildren,
+  OperationsSamplerRoute: OperationsSamplerRoute,
+  ApiSamplerStatusRoute: ApiSamplerStatusRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -32,6 +32,29 @@ test("job creation publishes valid request and status files atomically", async (
   assert.deepEqual(await readJobStatus(status.jobId, jobsRoot), status);
   const names = await import("node:fs/promises").then(({ readdir }) => readdir(jobDirectory(status.jobId, jobsRoot)));
   assert.deepEqual(names.sort(), ["request.json", "status.json"]);
+});
+
+test("sampled job creation preserves validated selection and cleanup policy", async () => {
+  const jobsRoot = path.join(root, "sampled-request-jobs");
+  const sampling = {
+    windowStart: "2026-08-26T10:00:00.000Z",
+    selectionGroup: "priority" as const,
+    avgRankTier: 81,
+    source: "opendota-public-matches",
+    samplingVersion: "ranked-v1",
+  };
+  const status = await createIngestionJob(8953222160n, jobsRoot, {
+    sampling,
+    deleteReplayAfterSuccess: true,
+  });
+  assert.deepEqual(await readIngestionRequest(status.jobId, jobsRoot), {
+    schemaVersion: 1,
+    jobId: status.jobId,
+    matchId: "8953222160",
+    createdAt: status.createdAt,
+    sampling,
+    deleteReplayAfterSuccess: true,
+  });
 });
 
 test("coordinator and parser worker complete the fetch, parse, validate, and load states", async () => {
@@ -73,6 +96,109 @@ test("coordinator and parser worker complete the fetch, parse, validate, and loa
   await coordinator.tick();
   assert.deepEqual(transitions, ["parsed", "claimed", "inspected", "claimed", "loaded"]);
   assert.match(JSON.stringify(await coordinator.get(queued.jobId)), /"state":"succeeded"/);
+  assert.equal((await stat(path.join(process.env.REPLAY_ROOT!, "8953222159"))).isDirectory(), true);
+});
+
+test("a successful sampled job deletes its replay cache and records cleanup", async () => {
+  const jobsRoot = path.join(root, "sampled-success-jobs");
+  const coordinator = coordinatorFor(jobsRoot);
+  const queued = await coordinator.enqueue(101n, {
+    sampling: {
+      windowStart: "2026-08-26T11:00:00.000Z",
+      selectionGroup: "control",
+      source: "opendota-public-matches",
+      samplingVersion: "ranked-v1",
+    },
+    deleteReplayAfterSuccess: true,
+  });
+  await coordinator.tick();
+  await coordinator.tick();
+  await writeParseResult({
+    schemaVersion: 1, jobId: queued.jobId, matchId: "101", status: "succeeded",
+    completedAt: new Date().toISOString(), extractionId,
+  }, jobsRoot);
+  await coordinator.tick();
+  await coordinator.tick();
+
+  const completed = await coordinator.get(queued.jobId);
+  assert.equal(completed.state, "succeeded");
+  assert.equal(completed.replayCleanup?.state, "succeeded");
+  await assert.rejects(stat(path.join(process.env.REPLAY_ROOT!, "101")), /ENOENT/);
+});
+
+test("an already-loaded sampled job passes its selection to preflight and still cleans up", async () => {
+  const jobsRoot = path.join(root, "sampled-already-loaded-jobs");
+  let receivedSampling: unknown;
+  const coordinator = coordinatorFor(jobsRoot, {
+    alreadyLoaded: async (_matchId: bigint, _checksum: string, sampling: unknown) => {
+      receivedSampling = sampling;
+      return true;
+    },
+  });
+  const sampling = {
+    windowStart: "2026-08-26T11:00:00.000Z",
+    selectionGroup: "priority" as const,
+    avgRankTier: 83,
+    source: "opendota-public-matches",
+    samplingVersion: "ranked-v1",
+  };
+  const queued = await coordinator.enqueue(103n, { sampling, deleteReplayAfterSuccess: true });
+  await coordinator.tick();
+  await coordinator.tick();
+
+  assert.deepEqual(receivedSampling, sampling);
+  const completed = await coordinator.get(queued.jobId);
+  assert.equal(completed.state, "succeeded");
+  assert.equal(completed.result, "already_loaded");
+  assert.equal(completed.replayCleanup?.state, "succeeded");
+  await assert.rejects(stat(path.join(process.env.REPLAY_ROOT!, "103")), /ENOENT/);
+});
+
+test("a replay cleanup error leaves ingestion successful and is recorded for retry", async () => {
+  const jobsRoot = path.join(root, "cleanup-failure-jobs");
+  let cleanupAttempts = 0;
+  const coordinator = coordinatorFor(jobsRoot, {
+    cleanupReplay: async (matchId: bigint) => {
+      cleanupAttempts += 1;
+      if (cleanupAttempts === 1) throw new Error("volume is temporarily read-only");
+      await rm(path.join(process.env.REPLAY_ROOT!, matchId.toString()), { recursive: true });
+    },
+  });
+  const queued = await coordinator.enqueue(102n, {
+    sampling: {
+      windowStart: "2026-08-26T12:00:00.000Z",
+      selectionGroup: "fill",
+      avgRankTier: 74,
+      source: "opendota-public-matches",
+      samplingVersion: "ranked-v1",
+    },
+    deleteReplayAfterSuccess: true,
+  });
+  await coordinator.tick();
+  await coordinator.tick();
+  await writeParseResult({
+    schemaVersion: 1, jobId: queued.jobId, matchId: "102", status: "succeeded",
+    completedAt: new Date().toISOString(), extractionId,
+  }, jobsRoot);
+  await coordinator.tick();
+  await coordinator.tick();
+
+  const completed = await coordinator.get(queued.jobId);
+  assert.equal(completed.state, "succeeded");
+  assert.equal(completed.result, "loaded");
+  assert.deepEqual(completed.replayCleanup?.state, "failed");
+  assert.match(completed.replayCleanup?.error ?? "", /read-only/);
+  assert.equal((await stat(path.join(process.env.REPLAY_ROOT!, "102"))).isDirectory(), true);
+  assert.match(await readFile(path.join(process.env.REPLAY_ROOT!, "102", "acquisition.json"), "utf8"), /replaySha256/);
+
+  const statusFile = path.join(jobDirectory(queued.jobId, jobsRoot), "status.json");
+  const retryReady = JSON.parse(await readFile(statusFile, "utf8"));
+  retryReady.replayCleanup.attemptedAt = "2020-01-01T00:00:00.000Z";
+  await writeFile(statusFile, `${JSON.stringify(retryReady)}\n`);
+  await coordinator.tick();
+  assert.equal(cleanupAttempts, 2);
+  assert.equal((await coordinator.get(queued.jobId)).replayCleanup?.state, "succeeded");
+  await assert.rejects(stat(path.join(process.env.REPLAY_ROOT!, "102")), /ENOENT/);
 });
 
 test("coordinator records unavailable replay, parser, and loader failures", async () => {
@@ -128,6 +254,7 @@ test("coordinator records unavailable replay, parser, and loader failures", asyn
   await loaderCoordinator.tick();
   await loaderCoordinator.tick();
   assert.deepEqual(pickFailure(await loaderCoordinator.get(loaderJob.jobId)), ["failed", "loading"]);
+  assert.equal((await stat(path.join(process.env.REPLAY_ROOT!, "3"))).isDirectory(), true);
 });
 
 test("Java parser runner invokes the existing jar contract and validates its JSON response", async () => {

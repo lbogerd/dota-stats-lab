@@ -53,6 +53,8 @@ ENV NODE_ENV=production \
     STAGING_INBOX_ROOT=/work/staging/inbox \
     STAGING_CLAIMED_ROOT=/work/staging/claimed \
     JOBS_ROOT=/work/staging/jobs \
+    SAMPLER_DB_PATH=/work/staging/sampler/sampler.duckdb \
+    SAMPLER_HEARTBEAT_PATH=/work/staging/sampler/heartbeat.json \
     MIGRATION_ROOT=/app/migrations \
     WAREHOUSE_PATH=/data/warehouse/dota.duckdb \
     WAREHOUSE_LOCK_PATH=/data/warehouse/dota.duckdb.lock
@@ -60,7 +62,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 RUN groupadd --gid 10001 dota \
     && useradd --uid 10001 --gid dota --no-create-home --shell /usr/sbin/nologin dota \
-    && mkdir -p /data/replays /data/warehouse /work/staging/inbox /work/staging/claimed /work/staging/jobs \
+    && mkdir -p /data/replays /data/warehouse /work/staging/inbox /work/staging/claimed /work/staging/jobs /work/staging/sampler \
     && chown -R dota:dota /data/replays /data/warehouse /work/staging
 
 COPY --from=node-production --chown=dota:dota /build/package.json ./package.json
@@ -97,6 +99,7 @@ ENV NODE_ENV=production \
     REPLAY_ROOT=/data/replays \
     STAGING_ROOT=/work/staging \
     JOBS_ROOT=/work/staging/jobs \
+    SAMPLER_HEARTBEAT_PATH=/work/staging/sampler/heartbeat.json \
     MIGRATION_ROOT=/app/migrations \
     WAREHOUSE_PATH=/data/warehouse/dota.duckdb \
     QUERY_FILES_ROOT=/data/queries \
@@ -106,7 +109,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 RUN groupadd --gid 10001 dota \
     && useradd --uid 10001 --gid dota --no-create-home --shell /usr/sbin/nologin dota \
-    && mkdir -p /data/replays /data/warehouse /data/queries /work/staging/inbox /work/staging/claimed /work/staging/jobs \
+    && mkdir -p /data/replays /data/warehouse /data/queries /work/staging/inbox /work/staging/claimed /work/staging/jobs /work/staging/sampler \
     && chown -R dota:dota /data/replays /data/warehouse /data/queries /work/staging
 
 COPY --from=node-production --chown=dota:dota /build/package.json ./package.json

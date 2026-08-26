@@ -5,6 +5,7 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { limits, replayDir } from "../config.js";
+import { validateSamplingMetadata, type SamplingMetadata } from "../jobs/job-files.js";
 import { writeJson } from "../lib/json.js";
 
 type AcquisitionSource = "cache" | "opendota" | "direct_url" | "direct_file";
@@ -20,6 +21,7 @@ export type Acquisition = {
   acquiredAt: string;
   cacheHit?: boolean;
   lastCacheHitAt?: string;
+  sampling?: SamplingMetadata;
   error?: string;
 };
 
@@ -43,13 +45,23 @@ const replayFileNames: Record<ReplayKind, string> = {
 };
 const acquisitionSources = new Set<AcquisitionSource>(["cache", "opendota", "direct_url", "direct_file"]);
 
-export async function fetchReplay(matchId: bigint, directSource?: string): Promise<Acquisition> {
+export async function fetchReplay(
+  matchId: bigint,
+  directSource?: string,
+  sampling?: SamplingMetadata,
+): Promise<Acquisition> {
+  if (sampling !== undefined) validateSamplingMetadata(sampling);
   const dir = replayDir(matchId);
   const acquisitionPath = path.join(dir, "acquisition.json");
   await mkdir(dir, { recursive: true });
 
   const cached = await validatedCacheEntry(matchId, dir, acquisitionPath);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) {
+    if (sampling === undefined) return cached;
+    const selected = { ...cached, sampling };
+    await replaceJson(acquisitionPath, selected);
+    return selected;
+  }
 
   let source: AcquisitionSource = "opendota";
   let location: string | undefined;
@@ -61,7 +73,10 @@ export async function fetchReplay(matchId: bigint, directSource?: string): Promi
       location = await openDotaReplayUrl(matchId);
     }
     if (!location) {
-      const unavailable: Acquisition = { schemaVersion: 1, matchId: matchId.toString(), status: "replay_unavailable", source, acquiredAt: new Date().toISOString() };
+      const unavailable: Acquisition = {
+        schemaVersion: 1, matchId: matchId.toString(), status: "replay_unavailable", source,
+        acquiredAt: new Date().toISOString(), ...(sampling === undefined ? {} : { sampling }),
+      };
       await replaceJson(acquisitionPath, unavailable);
       return unavailable;
     }
@@ -78,6 +93,7 @@ export async function fetchReplay(matchId: bigint, directSource?: string): Promi
         schemaVersion: 1, matchId: matchId.toString(), status: "available", source,
         replaySha256: result.sha256, replayBytes: result.bytes, replayPath,
         ...(source !== "direct_file" ? { replayUrl: location } : {}), acquiredAt: new Date().toISOString(),
+        ...(sampling === undefined ? {} : { sampling }),
       };
       await replaceJson(acquisitionPath, acquisition);
       return acquisition;
@@ -89,6 +105,7 @@ export async function fetchReplay(matchId: bigint, directSource?: string): Promi
       const unavailable: Acquisition = {
         schemaVersion: 1, matchId: matchId.toString(), status: "replay_unavailable", source,
         acquiredAt: new Date().toISOString(), error: error.message,
+        ...(sampling === undefined ? {} : { sampling }),
       };
       await replaceJson(acquisitionPath, unavailable);
       return unavailable;
@@ -96,6 +113,7 @@ export async function fetchReplay(matchId: bigint, directSource?: string): Promi
     const failed: Acquisition = {
       schemaVersion: 1, matchId: matchId.toString(), status: "error", source,
       acquiredAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error),
+      ...(sampling === undefined ? {} : { sampling }),
     };
     await replaceJson(acquisitionPath, failed);
     throw error;
@@ -309,6 +327,10 @@ async function readAcquisition(file: string, matchId: bigint): Promise<Acquisiti
     || value.replayBytes > limits.replayBytes
     || typeof value.acquiredAt !== "string"
     || !Number.isFinite(Date.parse(value.acquiredAt))) return undefined;
+  if (value.sampling !== undefined) {
+    try { validateSamplingMetadata(value.sampling); }
+    catch { return undefined; }
+  }
   return value as Acquisition;
 }
 

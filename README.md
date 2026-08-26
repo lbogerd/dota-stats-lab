@@ -19,7 +19,7 @@ Docker Engine with Compose v2 is the only required runtime. The wrapper uses the
 git submodule update --init --recursive
 ./dota init
 ./dota ingest 8955653541
-docker compose up --detach --build --wait web parser-worker
+docker compose up --detach --build --wait web parser-worker sampler
 ```
 
 Open `http://127.0.0.1:3400` locally. The deployed, authenticated instance is at [dota.tainer.run](https://dota.tainer.run).
@@ -63,7 +63,28 @@ payloads immutable and replicate them off-host for a true backup. Their legacy
 the suffix. Ingestion detects compression from the file magic. See the
 archive's own `README.md` for checksum and recovery instructions.
 
-The first successful acquisition is cached with its size, SHA-256 checksum, source, and timestamp. Every cache hit checks the metadata, size, checksum, and file format again. A download stays in a temporary file until validation succeeds. Temporary network errors use a limited number of retries. This also applies to HTTP 408, 425, 429, and 5xx responses. The downloader honors a bounded `Retry-After` value and reports unavailable replays separately.
+The first successful acquisition is cached with its size, SHA-256 checksum, source, and timestamp. Every cache hit checks the metadata, size, checksum, and file format again. A download stays in a temporary file until validation succeeds. Temporary network errors use a limited number of retries. This also applies to HTTP 408, 425, 429, and 5xx responses. The downloader honors a bounded `Retry-After` value and reports unavailable replays separately. Manual jobs keep this cache. Sampled jobs remove their replay directory only after the database load succeeds; failed jobs keep it for diagnosis.
+
+## Ranked match sampler
+
+The `sampler` service polls OpenDota's public-match feed and keeps only ranked matches (`lobby_type = 7`). It stores candidate match IDs and its cursor in a small DuckDB file under the staging volume. It does not store player names or account IDs.
+
+Each closed UTC hour targets 30 matches. The deterministic selection takes up to 24 matches with the highest known average rank tier, then 6 hash-selected control matches. If one group is short, it fills from the remaining matches without duplicates. OpenDota's public feed is smaller than the full Dota match stream, so 30 is a best-effort target and under-target hours are reported clearly.
+
+The default service is live, not a dry run. These settings can be changed in `compose.yaml` or through environment variables:
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `SAMPLER_TARGET_PER_HOUR` | `30` | Maximum selected matches per UTC hour |
+| `SAMPLER_PRIORITY_PER_HOUR` | `24` | High-rank part of the target |
+| `SAMPLER_CONTROL_PER_HOUR` | `6` | Deterministic control part of the target |
+| `SAMPLER_WINDOW_DELAY_MINUTES` | `90` | Wait after an hour ends before selection |
+| `SAMPLER_POLL_INTERVAL_MS` | `60000` | Delay between provider polls |
+| `SAMPLER_BACKFILL_HOURS` | `6` | History collected at first start |
+| `SAMPLER_MAX_ACTIVE_JOBS` | `60` | Backpressure limit for the shared ingestion queue |
+| `SAMPLER_DRY_RUN` | `false` | Select IDs but do not create ingestion jobs |
+
+The sampler writes an atomic heartbeat every 30 seconds. Open `/operations/sampler` for the operations page, `/api/sampler/status` for JSON, or `/health/sampler` for a health response. Monitoring warns after 15 minutes without a successful provider request and becomes critical after 30 minutes. A heartbeat older than 2 minutes is critical. Queue depth, oldest queued job, failed work, and disk use are also shown. The main `/health` endpoint stays separate so a provider outage does not restart the website.
 
 ## One-command workflows
 
@@ -84,10 +105,11 @@ The browser tests expect a healthy Compose web service. They also expect at leas
 
 ## Architecture and ownership
 
-There are two permanent processes:
+There are three permanent processes:
 
 1. `web` runs TanStack Start, downloads replays, coordinates durable jobs, performs serialized DuckDB loading, and serves read-only queries.
 2. `parser-worker` runs the JVM Clarity parser without network or warehouse access.
+3. `sampler` collects ranked match IDs, closes hourly selection windows, and writes durable ingestion requests. It has network and staging access, but no replay or warehouse volume.
 
 The JVM worker is separate because Clarity is Java and replay parsing uses much CPU and memory. This keeps the web server responsive. It also avoids sending a large event stream through another API. Job request, status, and result files are published atomically in the staging volume. One coordinator advances one job at a time. After a restart, it resumes safe states or records a clear failure.
 
@@ -208,7 +230,7 @@ The default benchmark uses three cached real matches (short, normal, and large),
 
 ## Recovery and operations
 
-- The replay cache is the source for re-extraction; parsed staging data is disposable.
+- The manual replay cache is the source for re-extraction; sampled replay files are intentionally removed after a successful load. Parsed staging data is disposable.
 - Failed parser/loader staging is retained for diagnosis. Successful staging is removed.
 - An interrupted queued/fetching/loading job is recovered; an invalid or unsafe state is marked failed with its stage.
 - If the same replay/profile already committed, both CLI and web paths report `already_loaded` without duplicating rows.

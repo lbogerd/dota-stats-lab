@@ -8,12 +8,28 @@ import { jsonStringify } from "../lib/json.js";
 export const jobStates = ["queued", "fetching", "parsing", "loading", "succeeded", "failed"] as const;
 export type JobState = typeof jobStates[number];
 
+export const selectionGroups = ["priority", "control", "fill"] as const;
+export type SelectionGroup = typeof selectionGroups[number];
+
+export type SamplingMetadata = {
+  windowStart: string;
+  selectionGroup: SelectionGroup;
+  avgRankTier?: number;
+  source: string;
+  samplingVersion: string;
+};
+
+export type IngestionJobOptions = {
+  sampling?: SamplingMetadata;
+  deleteReplayAfterSuccess?: boolean;
+};
+
 export type IngestionRequest = {
   schemaVersion: 1;
   jobId: string;
   matchId: string;
   createdAt: string;
-};
+} & IngestionJobOptions;
 
 export type JobError = {
   stage: Exclude<JobState, "queued" | "succeeded" | "failed">;
@@ -32,6 +48,11 @@ export type JobStatus = {
   extractionId?: string;
   result?: "loaded" | "already_loaded";
   error?: JobError;
+  replayCleanup?: {
+    state: "succeeded" | "failed";
+    attemptedAt: string;
+    error?: string;
+  };
 };
 
 export type ParseRequest = {
@@ -60,11 +81,22 @@ export function jobDirectory(jobId: string, jobsRoot = paths.jobsRoot): string {
   return path.join(jobsRoot, jobId);
 }
 
-export async function createIngestionJob(matchId: bigint, jobsRoot = paths.jobsRoot): Promise<JobStatus> {
+export async function createIngestionJob(
+  matchId: bigint,
+  jobsRoot = paths.jobsRoot,
+  options: IngestionJobOptions = {},
+): Promise<JobStatus> {
+  if (options.sampling !== undefined) validateSamplingMetadata(options.sampling);
+  if (options.deleteReplayAfterSuccess !== undefined && typeof options.deleteReplayAfterSuccess !== "boolean") {
+    throw new Error("deleteReplayAfterSuccess must be a boolean");
+  }
+  if (options.deleteReplayAfterSuccess === true && options.sampling === undefined) {
+    throw new Error("Replay cleanup policy is only valid for a sampled job");
+  }
   const jobId = randomUUID();
   const createdAt = new Date().toISOString();
   const request: IngestionRequest = {
-    schemaVersion: 1, jobId, matchId: matchId.toString(), createdAt,
+    schemaVersion: 1, jobId, matchId: matchId.toString(), createdAt, ...options,
   };
   const status: JobStatus = {
     schemaVersion: 1, jobId, matchId: matchId.toString(), state: "queued", createdAt, updatedAt: createdAt,
@@ -123,6 +155,21 @@ export async function updateJobStatus(
     ...(state === "succeeded" || state === "failed" ? { completedAt: now } : {}),
     ...details,
   };
+  await atomicWriteJson(path.join(jobDirectory(previous.jobId, jobsRoot), "status.json"), next);
+  return next;
+}
+
+export async function updateReplayCleanup(
+  previous: JobStatus,
+  replayCleanup: NonNullable<JobStatus["replayCleanup"]>,
+  jobsRoot = paths.jobsRoot,
+): Promise<JobStatus> {
+  if (previous.state !== "succeeded") throw new Error("Replay cleanup can only be recorded for a successful job");
+  validDate(replayCleanup.attemptedAt);
+  if (replayCleanup.state === "failed" && (replayCleanup.error === undefined || replayCleanup.error.length === 0)) {
+    throw new Error("Failed replay cleanup must include an error");
+  }
+  const next: JobStatus = { ...previous, updatedAt: new Date().toISOString(), replayCleanup };
   await atomicWriteJson(path.join(jobDirectory(previous.jobId, jobsRoot), "status.json"), next);
   return next;
 }
@@ -186,6 +233,10 @@ function validateIngestionRequest(value: unknown, expectedId: string): Ingestion
   if (!isObject(value) || value.schemaVersion !== 1 || value.jobId !== expectedId) throw new Error("Invalid ingestion request");
   parseMatchId(stringField(value, "matchId"));
   validDate(stringField(value, "createdAt"));
+  if (value.sampling !== undefined) validateSamplingMetadata(value.sampling);
+  if (value.deleteReplayAfterSuccess !== undefined && typeof value.deleteReplayAfterSuccess !== "boolean") {
+    throw new Error("deleteReplayAfterSuccess must be a boolean");
+  }
   return value as IngestionRequest;
 }
 
@@ -195,7 +246,31 @@ function validateJobStatus(value: unknown, expectedId: string): JobStatus {
   if (!jobStates.includes(value.state as JobState)) throw new Error("Invalid job state");
   validDate(stringField(value, "createdAt"));
   validDate(stringField(value, "updatedAt"));
+  if (value.replayCleanup !== undefined) {
+    if (!isObject(value.replayCleanup)
+      || (value.replayCleanup.state !== "succeeded" && value.replayCleanup.state !== "failed")) {
+      throw new Error("Invalid replay cleanup status");
+    }
+    validDate(stringField(value.replayCleanup, "attemptedAt"));
+    if (value.replayCleanup.state === "failed") stringField(value.replayCleanup, "error");
+  }
   return value as JobStatus;
+}
+
+export function validateSamplingMetadata(value: unknown): SamplingMetadata {
+  if (!isObject(value)) throw new Error("Sampling metadata must be an object");
+  validDate(stringField(value, "windowStart"));
+  if (!selectionGroups.includes(value.selectionGroup as SelectionGroup)) throw new Error("Invalid sampling selection group");
+  if (value.avgRankTier !== undefined
+    && (typeof value.avgRankTier !== "number"
+      || !Number.isSafeInteger(value.avgRankTier)
+      || value.avgRankTier < 0
+      || value.avgRankTier > 99)) {
+    throw new Error("avgRankTier must be an integer from 0 through 99");
+  }
+  stringField(value, "source");
+  stringField(value, "samplingVersion");
+  return value as SamplingMetadata;
 }
 
 function validateParseRequest(value: unknown, expectedId: string): ParseRequest {

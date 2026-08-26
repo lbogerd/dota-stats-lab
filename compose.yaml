@@ -98,6 +98,45 @@ services:
         source: queries
         target: /data/queries
 
+  sampler:
+    build:
+      context: .
+      target: app
+    image: dota-stats-lab-app:local
+    command: ["sampler"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 0.5
+    pids_limit: 128
+    environment:
+      SAMPLER_DB_PATH: /work/staging/sampler/sampler.duckdb
+      SAMPLER_HEARTBEAT_PATH: /work/staging/sampler/heartbeat.json
+      SAMPLER_TARGET_PER_HOUR: "30"
+      SAMPLER_PRIORITY_PER_HOUR: "24"
+      SAMPLER_CONTROL_PER_HOUR: "6"
+      SAMPLER_DRY_RUN: "false"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('node:fs');const h=JSON.parse(fs.readFileSync('/work/staging/sampler/heartbeat.json','utf8'));if(Date.now()-Date.parse(h.updatedAt)>120000)process.exit(1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 4
+      start_period: 30s
+    depends_on:
+      staging-init:
+        condition: service_completed_successfully
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - type: volume
+        source: staging
+        target: /work/staging
+
   fetch:
     build:
       context: .
