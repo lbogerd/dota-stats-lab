@@ -172,9 +172,25 @@ class HeroPositionTimelineTest {
         assertEquals(List.of(), unknownReplication.finishTick(0.0, 1));
 
         HeroPositionTimeline explicitlyMain = completeHeroWithoutCopyClassification();
+        explicitlyMain.observeHeroProperty(1L, "m_bIsIllusion", false);
+        explicitlyMain.observeHeroProperty(1L, "m_bIsPhantom", false);
         explicitlyMain.observeHeroProperty(1L, "m_bIsClone", false);
         explicitlyMain.observeHeroProperty(1L, "m_hReplicatingOtherHeroModel", 16_777_215);
         assertEquals(1, explicitlyMain.finishTick(0.0, 1).size());
+    }
+
+    @Test void fallbackRequiresExplicitFalseIllusionAndPhantomFields() {
+        HeroPositionTimeline unknownIllusion = completeHeroWithoutCopyClassification();
+        unknownIllusion.observeHeroProperty(1L, "m_bIsPhantom", false);
+        unknownIllusion.observeHeroProperty(1L, "m_bIsClone", false);
+        unknownIllusion.observeHeroProperty(1L, "m_hReplicatingOtherHeroModel", 16_777_215);
+        assertEquals(List.of(), unknownIllusion.finishTick(0.0, 1));
+
+        HeroPositionTimeline unknownPhantom = completeHeroWithoutCopyClassification();
+        unknownPhantom.observeHeroProperty(1L, "m_bIsIllusion", false);
+        unknownPhantom.observeHeroProperty(1L, "m_bIsClone", false);
+        unknownPhantom.observeHeroProperty(1L, "m_hReplicatingOtherHeroModel", 16_777_215);
+        assertEquals(List.of(), unknownPhantom.finishTick(0.0, 1));
     }
 
     @Test void selectedHeroHandleIsSufficientWhenCopyClassificationIsUnknown() {
@@ -225,6 +241,7 @@ class HeroPositionTimelineTest {
         timeline.observeHeroProperty(uid, "m_iTeamNum", teamId);
         timeline.observeHeroProperty(uid, "m_lifeState", 0);
         timeline.observeHeroProperty(uid, "m_bIsIllusion", false);
+        timeline.observeHeroProperty(uid, "m_bIsPhantom", false);
         timeline.observeHeroProperty(uid, "m_bIsClone", false);
         timeline.observeHeroProperty(uid, "m_hReplicatingOtherHeroModel", 16_777_215);
         timeline.observeHeroProperty(uid, "CBodyComponent.m_cellX", 128);
@@ -256,6 +273,7 @@ class HeroPositionTimelineTest {
         timeline.observeHeroProperty(uid, "m_iTeamNum", teamId);
         timeline.observeHeroProperty(uid, "m_lifeState", 0);
         timeline.observeHeroProperty(uid, "m_bIsIllusion", false);
+        timeline.observeHeroProperty(uid, "m_bIsPhantom", false);
         timeline.observeHeroProperty(uid, "m_bIsClone", false);
         timeline.observeHeroProperty(uid, "m_hReplicatingOtherHeroModel", 16_777_215);
         timeline.observeHeroProperty(uid, prefix + ".m_cellX", cellX);
@@ -272,6 +290,7 @@ class HeroPositionTimelineTest {
         timeline.observeHeroProperty(uid, "m_iTeamNum", teamId);
         timeline.observeHeroProperty(uid, "m_lifeState", 0);
         timeline.observeHeroProperty(uid, "m_bIsIllusion", false);
+        timeline.observeHeroProperty(uid, "m_bIsPhantom", false);
         timeline.observeHeroProperty(uid, "m_bIsClone", false);
         timeline.observeHeroProperty(uid, "m_hReplicatingOtherHeroModel", 16_777_215);
         timeline.observeHeroProperty(uid, "CBodyComponent.m_cellX", 128);

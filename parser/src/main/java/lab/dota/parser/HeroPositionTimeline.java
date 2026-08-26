@@ -203,7 +203,9 @@ final class HeroPositionTimeline {
      * entity as the original.
      */
     private static boolean hasExplicitMainHeroClassification(HeroState hero) {
-        return Boolean.FALSE.equals(hero.clone)
+        return Boolean.FALSE.equals(hero.illusion)
+                && Boolean.FALSE.equals(hero.phantom)
+                && Boolean.FALSE.equals(hero.clone)
                 && hero.replicatingHandle != null
                 && isNullHandle(hero.replicatingHandle);
     }
