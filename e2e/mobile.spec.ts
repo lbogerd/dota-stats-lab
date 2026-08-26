@@ -92,6 +92,10 @@ test("mobile user can browse data and manage a saved query", async ({ page }) =>
 });
 
 test("mobile user can open a real match overview", async ({ page }) => {
+  const mapResponse = await page.request.get("/assets/dota-map.webp");
+  expect(mapResponse.ok()).toBeTruthy();
+  expect(mapResponse.headers()["content-type"]).toContain("image/webp");
+
   const fixtureMatchId = process.env.E2E_MATCH_ID;
   if (fixtureMatchId) {
     expect(fixtureMatchId).toMatch(/^[1-9][0-9]*$/);
