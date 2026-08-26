@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { MatchOverviewPlayer, MatchOverviewTeamTotals } from "../server/overview";
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
 import { GpmSection } from "../web/gpm-section";
+import { HeroHeatmapSection } from "../web/hero-heatmap-section";
 import {
   displayValue,
   formatInteger,
@@ -122,6 +123,12 @@ function MatchDetail() {
       players={match.players}
       radiantName={teamName(2, summary.radiantTeamName)}
       direName={teamName(3, summary.direTeamName)}
+    />
+
+    <HeroHeatmapSection
+      matchId={matchId}
+      durationSeconds={summary.durationSeconds}
+      players={match.players}
     />
 
     <div className="mt-6 space-y-6">

@@ -114,6 +114,22 @@ test("mobile user can open a real match overview", async ({ page }) => {
     await gpmWindow.selectOption("1");
     await expect(page.getByText("Rolling GPM - last 1 seconds", { exact: true })).toBeVisible();
   }
+  await expect(page.getByRole("heading", { name: "Hero location heat map" })).toBeVisible();
+  const heatmapReady = page.getByText(/Showing [0-9,]+ position samples from/);
+  const heatmapUnavailable = page.getByText(/Hero position data is unavailable for this extraction/);
+  await expect(heatmapReady.or(heatmapUnavailable)).toBeVisible();
+  if (await heatmapReady.isVisible()) {
+    const heroSelect = page.getByLabel("Heat map hero");
+    const heroOptions = heroSelect.locator("option");
+    expect(await heroOptions.count()).toBeGreaterThan(1);
+    await heroSelect.selectOption({ index: 1 });
+    const selectedHero = await heroSelect.locator("option:checked").textContent();
+    expect(selectedHero).toBeTruthy();
+    await page.locator("#end-time-text").fill("0:10.0");
+    await page.locator("#end-time-text").press("Enter");
+    await expect(page.getByText(/Selection:/)).toContainText(`${selectedHero}, 0:00.0–0:10.0`);
+    await expect(page.getByText(/Showing [0-9,]+ position samples from 0:00.0 through 0:10.0/)).toBeVisible();
+  }
   await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
   await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();
 
