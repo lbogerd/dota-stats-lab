@@ -61,6 +61,7 @@ export function HeroHeatmap({ cells, maximumCellCount }: {
         src="/assets/dota-map.webp"
         alt="Dota battlefield map"
         className="block h-full w-full object-cover"
+        style={{ filter: "saturate(0.15)" }}
         onLoad={draw}
       />
       <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" />

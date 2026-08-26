@@ -23,8 +23,10 @@ describe("HeroHeatmap", () => {
     const { container } = render(<HeroHeatmap cells={cells} maximumCellCount={100} />);
 
     const canvas = container.querySelector("canvas")!;
+    const mapImage = container.querySelector("img")!;
     expect(canvas.width).toBe(640);
     expect(canvas.height).toBe(640);
     expect(fillRect).toHaveBeenCalledWith(20, 30, 10.5, 10.5);
+    expect(mapImage.style.filter).toBe("saturate(0.15)");
   });
 });
