@@ -29,6 +29,14 @@ Generated: 2026-08-25T20:22:06Z
 | normal | 8955653541 | 42,443 | 25.0 MiB | 94.08 ms | 74.99 ms | 916.1 KiB | 1.00 GPM | 954.27 ms |
 | large | 8946303764 | 64,451 | 28.5 MiB | 169.63 ms | 99.32 ms | 1338.0 KiB | 1.00 GPM | 982.28 ms |
 
+## Hero position and heat-map measurements
+
+This result set predates the 100 ms hero-position export. It has no position
+row, position-output, or heat-map query measurements. Run
+`./scripts/benchmark.sh` with the current parser and loader images to create
+these measurements. The benchmark report will keep the GPM measurements and
+checks in the preceding table.
+
 ## Measurement boundaries and limitations
 
 - Replay download time is excluded; every run mounts an existing cached replay read-only.

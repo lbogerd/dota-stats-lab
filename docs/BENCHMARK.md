@@ -21,13 +21,20 @@ The default corpus is:
 
 For every replay, the command performs one warm-up and three measured
 ingestions. The warm-up is not measured. Every ingestion gets a new staging
-tree and a new DuckDB file. Download time is not measured. A disposable web
+tree and a new DuckDB file. Download time is not measured. Disposable web
 containers serve the final normal- and near-hour-match warehouses on loopback.
 For each, the benchmark sends one warm overview request and 30 measured
 overview requests, and measures mobile browser rendering through the granular
 GPM ready state. It also runs one browser acknowledgement probe against the
 match selected by `BENCHMARK_HTTP_MATCH_ID`. Benchmark containers do not join or
 change the deployed Compose application.
+
+Each ingestion also measures the 100 ms hero-position data. The benchmark
+records the exported and stored position row counts, the position-file bytes,
+the total parser output bytes, and the DuckDB warehouse bytes. It queries a
+64 by 64 all-hero heat map for a range at the center of the match. The initial
+range is five minutes. It records the first query, the median of five later
+queries, one server response, and the response size.
 
 Results are written beneath `benchmark-results/TIMESTAMP/` as raw JSONL,
 environment JSON, a combined `results.json`, and a rendered `BENCHMARK.md`.
@@ -56,6 +63,11 @@ BENCHMARK_NORMAL_MATCH_ID=456 \
 BENCHMARK_LARGE_MATCH_ID=789 \
 BENCHMARK_OUTPUT_DIR=/tmp/dota-results \
 ./scripts/benchmark.sh
+
+# Use a two-minute heat-map range and seven warm query samples.
+BENCHMARK_HEATMAP_RANGE_SECONDS=120 \
+BENCHMARK_HEATMAP_WARM_SAMPLES=7 \
+./scripts/benchmark.sh
 ```
 
 `BENCHMARK_RUNS` can change the measured-run count, but acceptance reports
@@ -67,8 +79,10 @@ supported rolling windows and defaults to 60. `BENCHMARK_GPM_WARM_SAMPLES`
 defaults to five query calls, and `BENCHMARK_BROWSER_RENDER_SAMPLES` defaults
 to three fresh mobile navigations. `BENCHMARK_GPM_MAX_ROUNDING_DIFFERENCE`
 defaults to 1 GPM and is the acceptance tolerance for the final cumulative-gold
-comparison. Image names can be overridden
-with `BENCHMARK_PARSER_IMAGE`, `BENCHMARK_APP_IMAGE`,
+comparison. `BENCHMARK_HEATMAP_RANGE_SECONDS` sets the length of the range at
+the center of the match and defaults to 300. A shorter match uses its full
+duration. `BENCHMARK_HEATMAP_WARM_SAMPLES` defaults to five. You can override
+image names with `BENCHMARK_PARSER_IMAGE`, `BENCHMARK_APP_IMAGE`,
 `BENCHMARK_WEB_IMAGE`, and `BENCHMARK_E2E_IMAGE`.
 
 The host needs Bash, Docker with Compose, `jq`, `curl`, and Node.js. The script
@@ -93,6 +107,22 @@ uses Docker directly when the current user can access it and otherwise uses
   for the selected extraction.
 - Warehouse bytes are the exact file size after loading one replay into its
   fresh DuckDB database and before query probes run.
+- Position output bytes are the exact size of `hero_positions.ndjson`. The
+  report also shows this size as a percentage of all exported NDJSON bytes.
+- Position row counts show both the parser manifest count and the retained
+  `analysis.hero_position_samples` count. A new extraction must store position
+  rows and must give equal cell and selected-sample totals for the measured
+  range.
+- Cold heat-map latency is the first 64 by 64 macro query on a new read-only
+  DuckDB connection. Warm heat-map latency is the median of five later queries
+  on that connection. The query uses all heroes and times with 100 ms
+  precision.
+- Heat-map response latency includes a new read-only connection, the
+  availability query, the heat-map query, and response assembly. Heat-map
+  response bytes are the UTF-8 JSON size of that response.
+- A schema-version-1 extraction has no position data. The benchmark reports
+  the position measurements as unavailable and continues with the other
+  measurements and all GPM acceptance checks.
 - Cold rolling GPM latency is the first materialized macro query on a new
   read-only DuckDB connection. Warm latency is the median of five later queries
   on that connection.
@@ -135,3 +165,6 @@ uses Docker directly when the current user can access it and otherwise uses
   not affect the reported phase timings.
 - Host contention can affect results. Record competing workloads or rerun the
   benchmark on an otherwise idle development computer.
+- Position-file bytes show the parser-output impact directly. The warehouse
+  value is the complete database size. It does not isolate the position table
+  from indexes, other tables, or DuckDB storage overhead.
