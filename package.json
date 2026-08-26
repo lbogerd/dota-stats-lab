@@ -7,6 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
+    "catalog:items:update": "node scripts/update-dota-item-catalog.mjs",
+    "catalog:items:verify": "node scripts/verify-dota-item-catalog.mjs",
+    "release:check": "pnpm catalog:items:verify && pnpm check && pnpm build && pnpm test && pnpm test:web",
     "dev": "vite dev",
     "start:web": "srvx --prod --host=0.0.0.0 --port=3000 --static=../client --entry=dist/server/server.js",
     "build": "pnpm build:web && pnpm build:cli",

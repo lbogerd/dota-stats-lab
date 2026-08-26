@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "imageSlugs": {
+    "byId": {},
+    "byInternalNamePrefix": {
+      "item_recipe_": {
+        "imageSlug": "recipe",
+        "reason": "The Valve CDN uses one generic image for item recipes."
+      }
+    }
+  },
+  "internalNameChanges": {}
+}
