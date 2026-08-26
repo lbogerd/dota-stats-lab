@@ -103,7 +103,7 @@ public final class Main {
 
             Instant completed = Instant.now();
             Map<String, Object> manifest = new LinkedHashMap<>();
-            manifest.put("schemaVersion", 1);
+            manifest.put("schemaVersion", 2);
             manifest.put("extractionId", extractionId);
             manifest.put("matchId", args.matchId());
             manifest.put("replaySha256", actualSha);
