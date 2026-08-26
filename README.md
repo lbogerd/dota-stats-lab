@@ -93,8 +93,8 @@ The sampler writes an atomic heartbeat every 30 seconds. Open `/operations/sampl
 # Application and test images
 sudo docker compose build test parser web parser-worker e2e
 
-# All automated checks (web/CLI unit and integration tests, parser tests, browser tests)
-pnpm check && pnpm build && pnpm test && pnpm test:web && sudo docker compose build parser e2e && sudo docker compose run --rm --no-deps e2e
+# All automated checks (catalog, web/CLI, parser, and browser tests)
+pnpm release:check && sudo docker compose build parser e2e && sudo docker compose run --rm --no-deps e2e
 
 # Reproducible real-replay benchmark
 ./scripts/benchmark.sh
@@ -200,7 +200,18 @@ Run these queries with `./dota sql`. The browser editor accepts one bounded, rea
 
 Tables use clear headers and captions. On a phone, tables become statistic cards. The site has clear loading, empty, missing-data, and error states. Keyboard focus is visible, and winner text does not depend on color.
 
-Hero and item images are served from Valve's public Steam CDN using Dota 2 asset paths. The local patch 7.40 map base is from the MIT-licensed OpenDota web project. Its exact source revision and license are in `public/assets/dota-map-LICENSE.txt`. Dota and Dota 2 are Valve trademarks; this independent learning project is not affiliated with or endorsed by Valve. The local ID/name maps are project-authored compatibility data and unknown/new IDs deliberately fall back to text rather than a broken image.
+Hero and item images are served from Valve's public Steam CDN using Dota 2 asset paths. Hero IDs use a small local compatibility map. Item IDs use the generated, versioned Valve item catalog in `src/web/dota-items.generated.json`. Unknown or new IDs fall back to text instead of a broken image. The local patch 7.40 map base is from the MIT-licensed OpenDota web project. Its exact source revision and license are in `public/assets/dota-map-LICENSE.txt`. Dota and Dota 2 are Valve trademarks; this independent learning project is not affiliated with or endorsed by Valve.
+
+### Item catalog maintenance
+
+Refresh the item catalog after a Dota patch, then review the reported additions, removals, changes, and unavailable CDN images:
+
+```sh
+pnpm catalog:items:update
+pnpm catalog:items:verify
+```
+
+The update command stores the unmodified Valve response under `data/dota/items/snapshots/` and regenerates the web catalog deterministically. Commit both files together. Do not edit a snapshot or the generated catalog. Use `data/dota/items/overrides.json` only for a documented compatibility correction. The update command uses the network; verification is local and is part of `pnpm release:check`.
 
 ## TanStack package decisions
 
@@ -223,7 +234,7 @@ Package versions are pinned in `package.json` and `pnpm-lock.yaml`. No experimen
 
 ## Tests and real replay fixtures
 
-Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM analysis, hero-position grids, server validation, SQL safety, and query files. Vitest covers missing overview fields, display conversions, GPM query keys, chart interaction, heat-map controls and drawing, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile GPM and heat-map states.
+Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM analysis, hero-position grids, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, GPM query keys, chart interaction, heat-map controls and drawing, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile GPM and heat-map states.
 
 Large or unlicensed replays are never committed. To use your own parser fixture, keep it outside Git and run:
 
