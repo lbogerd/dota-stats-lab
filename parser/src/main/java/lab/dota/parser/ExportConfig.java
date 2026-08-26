@@ -22,11 +22,14 @@ record ExportConfig(long maxInputBytes, long maxOutputBytes, long maxRecords,
         result.put("maxRecords", maxRecords);
         result.put("timeoutSeconds", timeoutSeconds);
         result.put("checkpointIntervalSeconds", checkpointIntervalSeconds);
+        result.put("positionSampleIntervalMilliseconds",
+                HeroPositionTimeline.SAMPLE_INTERVAL_MILLISECONDS);
         result.put("messageTypes", java.util.List.of(
                 "CMsgDOTAMatch", "CDOTAMatchMetadataFile", "CMsgDOTACombatLogEntry",
                 "CNETMsg_Tick"));
         result.put("entityClassPatterns", java.util.List.of(
-                "CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy"));
+                "CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy",
+                "CDOTA_PlayerResource", "CDOTA_Unit_Hero_.*"));
         return result;
     }
 

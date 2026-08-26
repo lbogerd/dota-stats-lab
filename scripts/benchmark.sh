@@ -17,6 +17,8 @@ HTTP_MATCH_ID=${BENCHMARK_HTTP_MATCH_ID:-$NORMAL_MATCH_ID}
 GPM_WINDOW_SECONDS=${BENCHMARK_GPM_WINDOW_SECONDS:-60}
 GPM_WARM_SAMPLES=${BENCHMARK_GPM_WARM_SAMPLES:-5}
 GPM_MAX_ROUNDING_DIFFERENCE=${BENCHMARK_GPM_MAX_ROUNDING_DIFFERENCE:-1}
+HEATMAP_RANGE_SECONDS=${BENCHMARK_HEATMAP_RANGE_SECONDS:-300}
+HEATMAP_WARM_SAMPLES=${BENCHMARK_HEATMAP_WARM_SAMPLES:-5}
 BROWSER_RENDER_SAMPLES=${BENCHMARK_BROWSER_RENDER_SAMPLES:-3}
 ONLY_REPLAY=${BENCHMARK_ONLY:-all}
 RUN_HTTP=${BENCHMARK_HTTP:-1}
@@ -31,6 +33,8 @@ OUTPUT_DIR=${BENCHMARK_OUTPUT_DIR:-$PROJECT_ROOT/benchmark-results/$(date -u +%Y
 [[ "$GPM_WINDOW_SECONDS" =~ ^(1|5|10|30|60|300)$ ]] || { echo "BENCHMARK_GPM_WINDOW_SECONDS must be 1, 5, 10, 30, 60, or 300" >&2; exit 2; }
 [[ "$GPM_WARM_SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo "BENCHMARK_GPM_WARM_SAMPLES must be positive" >&2; exit 2; }
 [[ "$GPM_MAX_ROUNDING_DIFFERENCE" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] || { echo "BENCHMARK_GPM_MAX_ROUNDING_DIFFERENCE must be nonnegative" >&2; exit 2; }
+[[ "$HEATMAP_RANGE_SECONDS" =~ ^[1-9][0-9]*$ ]] || { echo "BENCHMARK_HEATMAP_RANGE_SECONDS must be positive" >&2; exit 2; }
+[[ "$HEATMAP_WARM_SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo "BENCHMARK_HEATMAP_WARM_SAMPLES must be positive" >&2; exit 2; }
 [[ "$BROWSER_RENDER_SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo "BENCHMARK_BROWSER_RENDER_SAMPLES must be positive" >&2; exit 2; }
 
 if docker info >/dev/null 2>&1; then DOCKER=(docker); else DOCKER=(sudo docker); fi
@@ -195,10 +199,24 @@ measure_gpm() {
     --entrypoint node "$APP_IMAGE" /app/measure-gpm.mjs
 }
 
+measure_positions() {
+  local scratch=$1 match_id=$2
+  "${DOCKER[@]}" run --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --memory 4g --cpus 1 --pids-limit 128 \
+    --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+    --mount "type=bind,src=$scratch/warehouse,dst=/data/warehouse" \
+    --mount "type=bind,src=$PROJECT_ROOT/scripts/measure-positions.mjs,dst=/app/measure-positions.mjs,readonly" \
+    -e WAREHOUSE_PATH=/data/warehouse/dota.duckdb -e BENCHMARK_MATCH_ID="$match_id" \
+    -e BENCHMARK_HEATMAP_RANGE_SECONDS="$HEATMAP_RANGE_SECONDS" \
+    -e BENCHMARK_HEATMAP_WARM_SAMPLES="$HEATMAP_WARM_SAMPLES" \
+    --entrypoint node "$APP_IMAGE" /app/measure-positions.mjs
+}
+
 run_ingestion() {
   local label=$1 match_id=$2 kind=$3 run_number=$4
   local scratch replay_path replay_bytes manifest_file manifest_copy parser_wall loader_wall
-  local parser_peak loader_peak peak complete metrics metrics_output warehouse_bytes gpm_json http_json=null acknowledgement=0
+  local parser_peak loader_peak peak complete metrics metrics_output warehouse_bytes gpm_json positions_json http_json=null acknowledgement=0
+  local position_exported_rows position_stored_rows
   scratch="$WORK_ROOT/run-${label}-${kind}-${run_number}-$RANDOM"
   mkdir -p "$scratch/staging/inbox" "$scratch/staging/claimed" "$scratch/staging/jobs" "$scratch/warehouse" "$scratch/queries"
   chmod 0777 "$scratch/staging/inbox" "$scratch/staging/claimed" "$scratch/staging/jobs" "$scratch/warehouse" "$scratch/queries"
@@ -230,15 +248,22 @@ run_ingestion() {
   (( parser_peak > loader_peak )) && peak=$parser_peak || peak=$loader_peak
   complete=$(( parser_wall + loader_wall ))
 
-  metrics_output=$(printf '%s\n' "SELECT e.extraction_id, e.preparation_elapsed_ms::VARCHAR AS preparation_ms, e.parse_elapsed_ms::VARCHAR AS parsing_ms, e.load_elapsed_ms::VARCHAR AS load_ms, e.summary_elapsed_ms::VARCHAR AS summary_ms, e.output_size_bytes::VARCHAR AS output_bytes, coalesce(json_extract_string(e.record_counts, '$.total'), '0') AS retained_rows, (SELECT count(*)::VARCHAR FROM analysis.player_gold_events AS gold WHERE gold.extraction_id = e.extraction_id) AS gold_event_rows, m.duration_seconds::VARCHAR AS duration_seconds FROM catalog.extractions e LEFT JOIN analysis.matches m USING (extraction_id) WHERE e.match_id = $match_id ORDER BY e.completed_at DESC LIMIT 1;" | \
+  metrics_output=$(printf '%s\n' "SELECT e.extraction_id, e.preparation_elapsed_ms::VARCHAR AS preparation_ms, e.parse_elapsed_ms::VARCHAR AS parsing_ms, e.load_elapsed_ms::VARCHAR AS load_ms, e.summary_elapsed_ms::VARCHAR AS summary_ms, e.output_size_bytes::VARCHAR AS output_bytes, coalesce(json_extract_string(e.record_counts, '$.total'), '0') AS retained_rows, (SELECT count(*)::VARCHAR FROM analysis.player_gold_events AS gold WHERE gold.extraction_id = e.extraction_id) AS gold_event_rows, (SELECT count(*)::VARCHAR FROM analysis.hero_position_samples AS position WHERE position.extraction_id = e.extraction_id) AS position_rows, m.duration_seconds::VARCHAR AS duration_seconds FROM catalog.extractions e LEFT JOIN analysis.matches m USING (extraction_id) WHERE e.match_id = $match_id ORDER BY e.completed_at DESC LIMIT 1;" | \
     "${DOCKER[@]}" run --rm --interactive --network none --read-only \
       --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
       --mount "type=bind,src=$scratch/warehouse,dst=/data/warehouse" \
       -e WAREHOUSE_PATH=/data/warehouse/dota.duckdb "$APP_IMAGE" sql)
   metrics=$(sed -n '1p' <<<"$metrics_output")
   [[ $(jq -r '.extraction_id // empty' <<<"$metrics") ]] || { echo "Could not read benchmark metrics" >&2; return 1; }
+  position_exported_rows=$(jq -r '.files.heroPositions.records // empty' "$manifest_copy")
+  position_stored_rows=$(jq -r '.position_rows | tonumber' <<<"$metrics")
+  if [[ -n "$position_exported_rows" && "$position_exported_rows" != "$position_stored_rows" ]]; then
+    echo "Position row mismatch: parser exported $position_exported_rows but loader stored $position_stored_rows" >&2
+    return 1
+  fi
   warehouse_bytes=$(stat -c %s "$scratch/warehouse/dota.duckdb")
   gpm_json=$(measure_gpm "$scratch" "$match_id")
+  positions_json=$(measure_positions "$scratch" "$match_id")
 
   if [[ "$match_id" == "$HTTP_MATCH_ID" ]]; then acknowledgement=1; fi
   if [[ "$RUN_HTTP" == 1 && "$kind" == measured && "$run_number" == "$MEASURED_RUNS" \
@@ -249,7 +274,7 @@ run_ingestion() {
   jq -n --arg label "$label" --arg matchId "$match_id" --arg kind "$kind" --argjson run "$run_number" \
     --argjson replayBytes "$replay_bytes" --argjson parserWall "$parser_wall" --argjson loaderWall "$loader_wall" \
     --argjson peak "$peak" --argjson complete "$complete" --argjson warehouseBytes "$warehouse_bytes" \
-    --argjson metrics "$metrics" --argjson gpm "$gpm_json" \
+    --argjson metrics "$metrics" --argjson gpm "$gpm_json" --argjson positions "$positions_json" \
     --argjson manifest "$(<"$manifest_copy")" --argjson http "$http_json" \
     '{label:$label,matchId:$matchId,kind:$kind,run:$run,replayBytes:$replayBytes,
       matchDurationSeconds:(if $metrics.duration_seconds == null then null else ($metrics.duration_seconds|tonumber) end),
@@ -259,8 +284,11 @@ run_ingestion() {
       parserContainerWallMs:$parserWall,loaderContainerWallMs:$loaderWall,
       peakRssBytes:$peak,retainedRows:($metrics.retained_rows|tonumber),
       exportedRows:([$manifest.files[].records]|add),outputBytes:($metrics.output_bytes|tonumber),
+      positionExportedRows:(($manifest.files.heroPositions.records // 0)|tonumber),
+      positionOutputBytes:(($manifest.files.heroPositions.bytes // 0)|tonumber),
       extractionId:$metrics.extraction_id,warehouseBytes:$warehouseBytes,
-      goldEventRows:($metrics.gold_event_rows|tonumber),gpm:$gpm,
+      goldEventRows:($metrics.gold_event_rows|tonumber),positionStoredRows:($metrics.position_rows|tonumber),
+      gpm:$gpm,positions:$positions,
       http:(if $http == null then null else $http end)}' >> "$RUNS_FILE"
   echo "$label $kind run $run_number complete: $complete ms" >&2
 
@@ -286,12 +314,14 @@ jq -n --arg generatedAt "$(date -u +%FT%TZ)" --slurpfile environment "$ENVIRONME
   --argjson httpEnabled "$RUN_HTTP" --argjson browserRenderSamples "$BROWSER_RENDER_SAMPLES" \
   --argjson gpmWindowSeconds "$GPM_WINDOW_SECONDS" --argjson gpmWarmSamples "$GPM_WARM_SAMPLES" \
   --argjson gpmMaxRoundingDifference "$GPM_MAX_ROUNDING_DIFFERENCE" \
-  '{schemaVersion:2,generatedAt:$generatedAt,environment:$environment[0],
+  --argjson heatmapRangeSeconds "$HEATMAP_RANGE_SECONDS" --argjson heatmapWarmSamples "$HEATMAP_WARM_SAMPLES" \
+  '{schemaVersion:3,generatedAt:$generatedAt,environment:$environment[0],
     configuration:{replaySource:$replaySource,warmupRuns:1,measuredRuns:$measuredRuns,
       overviewSamples:(if $httpEnabled == 1 then 30 else 0 end),parserMemoryLimitBytes:4294967296,
       browserRenderSamples:(if $httpEnabled == 1 then $browserRenderSamples else 0 end),
       gpmWindowSeconds:$gpmWindowSeconds,gpmOutputStepSeconds:1,gpmWarmSamples:$gpmWarmSamples,
       gpmMaxRoundingDifference:$gpmMaxRoundingDifference,
+      heatmapRangeSeconds:$heatmapRangeSeconds,heatmapGridSize:64,heatmapWarmSamples:$heatmapWarmSamples,
       loaderMemoryLimitBytes:4294967296,parserCpus:2,loaderCpus:2,memorySampleIntervalMs:200},
     runs:$runs}' > "$RESULTS_FILE"
 node scripts/render-benchmark.mjs "$RESULTS_FILE" "$OUTPUT_DIR/BENCHMARK.md"

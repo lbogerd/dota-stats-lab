@@ -10,6 +10,7 @@ COPY package.json pnpm-lock.yaml tsconfig.json tsconfig.web.json vite.config.ts 
 RUN pnpm install --frozen-lockfile
 
 COPY parser-identity.json ./
+COPY public ./public
 COPY src ./src
 COPY tests ./tests
 RUN pnpm build

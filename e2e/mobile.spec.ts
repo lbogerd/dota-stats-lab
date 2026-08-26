@@ -92,14 +92,24 @@ test("mobile user can browse data and manage a saved query", async ({ page }) =>
 });
 
 test("mobile user can open a real match overview", async ({ page }) => {
-  await page.goto("/matches");
-  await expect(page.getByRole("heading", { name: "Stored matches" })).toBeVisible();
+  const mapResponse = await page.request.get("/assets/dota-map.webp");
+  expect(mapResponse.ok()).toBeTruthy();
+  expect(mapResponse.headers()["content-type"]).toContain("image/webp");
 
-  const matchLink = page.locator('main a[href^="/matches/"]:visible').first();
-  await expect(matchLink, "ingest at least one replay before running browser tests").toBeVisible();
-  const href = await matchLink.getAttribute("href");
-  expect(href).toMatch(/^\/matches\/[1-9][0-9]*$/);
-  await matchLink.click();
+  const fixtureMatchId = process.env.E2E_MATCH_ID;
+  if (fixtureMatchId) {
+    expect(fixtureMatchId).toMatch(/^[1-9][0-9]*$/);
+    await page.goto(`/matches/${fixtureMatchId}`);
+  } else {
+    await page.goto("/matches");
+    await expect(page.getByRole("heading", { name: "Stored matches" })).toBeVisible();
+
+    const matchLink = page.locator('main a[href^="/matches/"]:visible').first();
+    await expect(matchLink, "ingest at least one replay before running browser tests").toBeVisible();
+    const href = await matchLink.getAttribute("href");
+    expect(href).toMatch(/^\/matches\/[1-9][0-9]*$/);
+    await matchLink.click();
+  }
 
   await expect(page.locator("h1")).toHaveText(/^#[1-9][0-9]*$/);
   await expect(page.getByText("Winning team:", { exact: false })).toBeVisible();
@@ -113,6 +123,26 @@ test("mobile user can open a real match overview", async ({ page }) => {
   if (await rollingGraph.isVisible()) {
     await gpmWindow.selectOption("1");
     await expect(page.getByText("Rolling GPM - last 1 seconds", { exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole("heading", { name: "Hero location heat map" })).toBeVisible();
+  const heatmapReady = page.getByText(/Showing [0-9,]+ position samples from/);
+  const heatmapUnavailable = page.getByText(/Hero position data is unavailable for this extraction/);
+  if (process.env.E2E_REQUIRE_HERO_POSITIONS === "1") {
+    await expect(heatmapReady).toBeVisible();
+  } else {
+    await expect(heatmapReady.or(heatmapUnavailable)).toBeVisible();
+  }
+  if (await heatmapReady.isVisible()) {
+    const heroSelect = page.getByLabel("Heat map hero");
+    const heroOptions = heroSelect.locator("option");
+    expect(await heroOptions.count()).toBeGreaterThan(1);
+    await heroSelect.selectOption({ index: 1 });
+    const selectedHero = await heroSelect.locator("option:checked").textContent();
+    expect(selectedHero).toBeTruthy();
+    await page.locator("#end-time-text").fill("0:10.0");
+    await page.locator("#end-time-text").press("Enter");
+    await expect(page.getByText(/Selection:/)).toContainText(`${selectedHero}, 0:00.0–0:10.0`);
+    await expect(page.getByText(/Showing [0-9,]+ position samples from 0:00.0 through 0:10.0/)).toBeVisible();
   }
   await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
   await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();

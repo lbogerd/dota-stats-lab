@@ -6,6 +6,7 @@ import skadistats.clarity.model.CombatLogEntry;
 import skadistats.clarity.model.Entity;
 import skadistats.clarity.model.FieldPath;
 import skadistats.clarity.processor.entities.OnEntityCreated;
+import skadistats.clarity.processor.entities.OnEntityDeleted;
 import skadistats.clarity.processor.entities.OnEntityUpdated;
 import skadistats.clarity.processor.gameevents.OnCombatLogEntry;
 import skadistats.clarity.processor.reader.OnMessage;
@@ -23,7 +24,7 @@ import java.util.Map;
 
 /** Compact, analysis-oriented default extraction profile. */
 final class ReplayExporter {
-    static final String PROFILE = "match-analysis-v1";
+    static final String PROFILE = "match-analysis-v2";
     private static final Logger log = LoggerFactory.getLogger(ReplayExporter.class);
 
     private final String extractionId;
@@ -34,11 +35,14 @@ final class ReplayExporter {
     private int matchTick;
     private int metadataTick;
     private long timelineSequence;
+    private long heroPositionSequence;
     private long entitySequence;
     private int demoTick;
     private final Map<Long, String> teamDataIds = new HashMap<>();
     private final GameClock gameClock = new GameClock();
     private final GoldTimeline goldTimeline = new GoldTimeline();
+    private final HeroPositionTimeline heroPositionTimeline = new HeroPositionTimeline();
+    private boolean gameEnded;
 
     ReplayExporter(String extractionId, NdjsonSet output, ExportConfig config, Instant startedAt) {
         this.extractionId = extractionId;
@@ -51,6 +55,18 @@ final class ReplayExporter {
         touch(context);
         match = message;
         matchTick = context.getTick();
+        for (DOTAS2GcMessagesCommon.CMsgDOTAMatch.Player player : message.getPlayersList()) {
+            if (!player.hasPlayerSlot() || !player.hasHeroId()) continue;
+            int playerSlot = player.getPlayerSlot();
+            if (playerSlot >= 0 && playerSlot <= 4) {
+                heroPositionTimeline.observeRoster(playerSlot, player.getHeroId(), 2);
+            } else if (playerSlot >= 128 && playerSlot <= 132) {
+                heroPositionTimeline.observeRoster(5 + playerSlot - 128, player.getHeroId(), 3);
+            }
+        }
+        if (message.hasDuration() && message.getDuration() > 0) {
+            heroPositionTimeline.markGameEnded((double) message.getDuration());
+        }
     }
 
     @OnMessage(DOTAS2MatchMetadata.CDOTAMatchMetadataFile.class)
@@ -171,6 +187,7 @@ final class ReplayExporter {
         touch(context);
         for (int i = 0; i < count; i++) observeGameRulesProperty(entity, paths[i]);
         gameClock.refresh();
+        if (gameEnded) heroPositionTimeline.markGameEnded(gameClock.gameTime());
     }
 
     @OnEntityCreated(classPattern = "CDOTA_DataRadiant|CDOTA_DataDire")
@@ -191,6 +208,37 @@ final class ReplayExporter {
         }
     }
 
+    @OnEntityCreated(classPattern = "CDOTA_PlayerResource")
+    public void onPlayerResourceCreated(Context context, Entity entity) {
+        touch(context);
+        observePlayerResourceState(entity);
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTA_PlayerResource")
+    public void onPlayerResourceUpdated(Context context, Entity entity, FieldPath[] paths, int count) {
+        touch(context);
+        for (int i = 0; i < count; i++) observePlayerResourceProperty(entity, paths[i]);
+    }
+
+    @OnEntityCreated(classPattern = "CDOTA_Unit_Hero_.*")
+    public void onHeroCreated(Context context, Entity entity) {
+        touch(context);
+        heroPositionTimeline.onHeroCreated(entity.getUid(), entity.getHandle());
+        observeHeroState(entity);
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTA_Unit_Hero_.*")
+    public void onHeroUpdated(Context context, Entity entity, FieldPath[] paths, int count) {
+        touch(context);
+        for (int i = 0; i < count; i++) observeHeroProperty(entity, paths[i]);
+    }
+
+    @OnEntityDeleted(classPattern = "CDOTA_Unit_Hero_.*")
+    public void onHeroDeleted(Context context, Entity entity) {
+        touch(context);
+        heroPositionTimeline.onHeroDeleted(entity.getUid());
+    }
+
     @OnTickEnd
     public void onTickEnd(Context context, boolean synthetic) throws IOException {
         touch(context);
@@ -207,6 +255,20 @@ final class ReplayExporter {
             row.put("gameTime", update.gameTime());
             output.write("propertyUpdates", row);
         }
+        for (HeroPositionTimeline.PositionSample sample
+                : heroPositionTimeline.finishTick(gameClock.gameTime(), demoTick)) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("extractionId", extractionId);
+            row.put("sequence", ++heroPositionSequence);
+            row.put("demoTick", sample.demoTick());
+            row.put("gameTimeMilliseconds", sample.gameTimeMilliseconds());
+            row.put("gamePlayerId", sample.gamePlayerId());
+            row.put("heroId", sample.heroId());
+            row.put("teamId", sample.teamId());
+            row.put("worldX", sample.worldX());
+            row.put("worldY", sample.worldY());
+            output.write("heroPositions", row);
+        }
     }
 
     private void observeGameRulesState(Entity entity) {
@@ -214,11 +276,40 @@ final class ReplayExporter {
         var iterator = entity.getState().fieldPathIterator();
         while (iterator.hasNext()) observeGameRulesProperty(entity, iterator.next());
         gameClock.refresh();
+        if (gameEnded) heroPositionTimeline.markGameEnded(gameClock.gameTime());
     }
 
     private void observeGameRulesProperty(Entity entity, FieldPath fieldPath) {
         String path = entity.getDtClass().getNameForFieldPath(fieldPath);
         gameClock.observeProperty(path, entity.getPropertyForFieldPath(fieldPath));
+        if ((path.equals("m_nGameState") || path.endsWith(".m_nGameState"))
+                && entity.getPropertyForFieldPath(fieldPath) instanceof Number state
+                && state.intValue() == 6) {
+            gameEnded = true;
+        }
+    }
+
+    private void observePlayerResourceState(Entity entity) {
+        if (entity.getState() == null) return;
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) observePlayerResourceProperty(entity, iterator.next());
+    }
+
+    private void observePlayerResourceProperty(Entity entity, FieldPath fieldPath) {
+        String path = entity.getDtClass().getNameForFieldPath(fieldPath);
+        heroPositionTimeline.observeRosterProperty(path, entity.getPropertyForFieldPath(fieldPath));
+    }
+
+    private void observeHeroState(Entity entity) {
+        if (entity.getState() == null) return;
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) observeHeroProperty(entity, iterator.next());
+    }
+
+    private void observeHeroProperty(Entity entity, FieldPath fieldPath) {
+        String path = entity.getDtClass().getNameForFieldPath(fieldPath);
+        heroPositionTimeline.observeHeroProperty(
+                entity.getUid(), path, entity.getPropertyForFieldPath(fieldPath));
     }
 
     private void observeTeamDataState(String instanceId, Entity entity) {
@@ -257,8 +348,8 @@ final class ReplayExporter {
         if (metadata == null) throw new IOException("replay does not contain CDOTAMatchMetadataFile");
         writeRecord(1, matchTick, "match_overview", match);
         writeRecord(2, metadataTick, "match_metadata", metadata);
-        log.info("profile={} exported 2 match documents and {} timeline events",
-                PROFILE, timelineSequence);
+        log.info("profile={} exported 2 match documents, {} timeline events, and {} hero positions",
+                PROFILE, timelineSequence, heroPositionSequence);
     }
 
     private void writeRecord(long sequence, int tick, String category,

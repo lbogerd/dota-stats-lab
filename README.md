@@ -1,13 +1,14 @@
 # Dota Replay Data Lab
 
-This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, and rolling gold per minute (GPM).
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, rolling gold per minute (GPM), and hero position heat maps.
 
-The default `match-analysis-v1` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
+The default `match-analysis-v2` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
 - the complete final `CMsgDOTAMatch` document;
 - the complete `CDOTAMatchMetadataFile`, including per-player and team graphs and snapshots;
 - every Clarity combat-log entry in compact typed columns;
-- cumulative earned-gold changes from `CDOTA_DataRadiant` and `CDOTA_DataDire`, timed by the game-rules clock.
+- cumulative earned-gold changes from `CDOTA_DataRadiant` and `CDOTA_DataDire`, timed by the game-rules clock;
+- living main-hero positions at pause-safe 100 ms intervals.
 
 The profile excludes packet transport, rendering, sound, voice, and generic entity history. These streams are large and have no defined use case here. The cached replay remains the source for a future extraction profile.
 
@@ -101,7 +102,7 @@ pnpm check && pnpm build && pnpm test && pnpm test:web && sudo docker compose bu
 
 Docker is the supported way to run the complete application. Host development needs Node.js 22 and pnpm 10. It also needs explicit host paths for replays, staging data, the warehouse, migrations, and saved queries.
 
-The browser tests expect a healthy Compose web service. They also expect at least one stored match. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is a reference report from the current extraction format.
+The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state for that match. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is a reference report from the current extraction format.
 
 ## Architecture and ownership
 
@@ -127,8 +128,9 @@ The profile applies Clarity runner filters before generic message/entity handlin
 | `CDOTAMatchMetadataFile` | complete JSON plus typed `analysis.team_time_series` | graphs, inventory/ability snapshots, wards, support statistics, and other future analyses |
 | `CMsgDOTACombatLogEntry` | typed `raw.combat_events` rows | every semantic field exposed by Clarity's combat-log API: combat, economy, levels, runes, wards, modifiers, visibility, abilities, objectives, and locations |
 | `CDOTA_DataRadiant` + `CDOTA_DataDire` + `CDOTAGamerulesProxy` | targeted entity/property staging plus typed `analysis.player_gold_events` | pause-safe cumulative earned-gold changes used for rolling player and team GPM |
+| `CDOTA_Unit_Hero_*` | compact staging rows plus typed `analysis.hero_position_samples` | pause-safe 100 ms world positions for living main heroes; illusions and temporary copies are excluded |
 
-The two complete documents stay in `raw.records`. BLOB fields stay in `raw.record_blobs`. Common filters, joins, and totals use normalized fields, so they do not parse the large documents. Combat events use typed columns and an extraction/time/type index. Internal Clarity string-table indices are not stored. The resolved names contain the useful Dota information.
+The two complete documents stay in `raw.records`. BLOB fields stay in `raw.record_blobs`. Common filters, joins, and totals use normalized fields, so they do not parse the large documents. Combat events use typed columns and an extraction/time/type index. Hero samples keep world coordinates in DuckDB and convert them to a fixed display grid only when a heat map is requested. Internal Clarity string-table indices are not stored. The resolved names contain the useful Dota information.
 
 Key schemas:
 
@@ -179,6 +181,11 @@ ORDER BY events DESC;
 SELECT *
 FROM analysis.match_rolling_gpm(8955653541, 60, 1)
 ORDER BY series_kind, team_id, player_slot NULLS FIRST, game_time_seconds;
+
+-- A 64 by 64 hero-position grid from 10:00.0 through 20:00.0.
+SELECT *
+FROM analysis.match_hero_heatmap(8955653541, 600000, 1200000, NULL, 64)
+ORDER BY cell_y, cell_x;
 ```
 
 The actual-game filter includes pre-game map activity from the pre-game state onward, as well as the complete match, and excludes post-game events.
@@ -187,13 +194,13 @@ Run these queries with `./dota sql`. The browser editor accepts one bounded, rea
 
 ## Website
 
-`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, and rolling GPM. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Its exact values can be inspected with pointer input or the keyboard. Older extractions retain a clear unavailable state instead of using an approximation.
+`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, rolling GPM, and a hero position heat map. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Its exact values can be inspected with pointer input or the keyboard. Older extractions retain a clear unavailable state instead of using sparse combat locations or another approximation.
 
 `/heroes` summarizes every hero picked or validly banned in matches that have both a normalized match row and a latest successful extraction. Picks and bans are distinct match counts; their rates use the number of matches in that fixed scope. Wins and losses use only picks with a known winner, while average GPM and XPM use the available player values. Missing averages and undecided win/loss rates remain `Unknown`. Existing stored match documents backfill the normalized draft table during migration, so ban statistics do not require replay re-extraction.
 
 Tables use clear headers and captions. On a phone, tables become statistic cards. The site has clear loading, empty, missing-data, and error states. Keyboard focus is visible, and winner text does not depend on color.
 
-Hero and item images are served from Valve's public Steam CDN using Dota 2 asset paths. Dota and Dota 2 are Valve trademarks; this independent learning project is not affiliated with or endorsed by Valve. The local ID/name maps are project-authored compatibility data and unknown/new IDs deliberately fall back to text rather than a broken image.
+Hero and item images are served from Valve's public Steam CDN using Dota 2 asset paths. The local patch 7.40 map base is from the MIT-licensed OpenDota web project. Its exact source revision and license are in `public/assets/dota-map-LICENSE.txt`. Dota and Dota 2 are Valve trademarks; this independent learning project is not affiliated with or endorsed by Valve. The local ID/name maps are project-authored compatibility data and unknown/new IDs deliberately fall back to text rather than a broken image.
 
 ## TanStack package decisions
 
@@ -216,7 +223,7 @@ Package versions are pinned in `package.json` and `pnpm-lock.yaml`. No experimen
 
 ## Tests and real replay fixtures
 
-Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM analysis, server validation, SQL safety, and query files. Vitest covers missing overview fields, display conversions, GPM query keys, chart interaction, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold and game-clock capture. Playwright covers the phone workflow and a real match overview, including its mobile GPM state.
+Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM analysis, hero-position grids, server validation, SQL safety, and query files. Vitest covers missing overview fields, display conversions, GPM query keys, chart interaction, heat-map controls and drawing, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile GPM and heat-map states.
 
 Large or unlicensed replays are never committed. To use your own parser fixture, keep it outside Git and run:
 
@@ -226,7 +233,9 @@ DOTA_REPLAY_SOURCE=/absolute/path/to/fixture.dem ./dota ingest MATCH_ID
 
 The repository includes the match IDs and acquisition URLs for all 147 TI 2026 matches. See [tests/fixtures/README.md](tests/fixtures/README.md). The replay files are not in Git.
 
-The default benchmark uses three cached real matches (short, normal, and large), performs one warm-up and three measured fresh-warehouse ingestions apiece, samples peak RSS, and measures overview and rolling-GPM query/response/render costs. Download time is excluded. Each run owns a disposable database and cannot alter the live warehouse.
+An extraction made before the hero-position export does not contain continuous positions. Re-ingest its cached replay with the current parser to create a new extraction. The application keeps the old successful extraction and selects the newest successful one.
+
+The default benchmark uses three cached real matches (short, normal, and large), performs one warm-up and three measured fresh-warehouse ingestions apiece, samples peak RSS, and measures overview, rolling-GPM, and hero-position query/response/render costs. Download time is excluded. Each run owns a disposable database and cannot alter the live warehouse.
 
 ## Recovery and operations
 

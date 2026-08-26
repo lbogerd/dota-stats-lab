@@ -21,6 +21,7 @@ class NdjsonSetTest {
         assertEquals(NdjsonSet.FILES.keySet(), files.keySet());
         for (String file : NdjsonSet.FILES.values()) assertTrue(Files.isRegularFile(directory.resolve(file)));
         assertEquals(1L, set.counts().get("records"));
+        assertEquals(0L, set.counts().get("heroPositions"));
         assertEquals(1L, set.counts().get("total"));
     }
 

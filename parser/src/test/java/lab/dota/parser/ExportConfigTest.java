@@ -28,7 +28,10 @@ class ExportConfigTest {
 
     @Test void describesOnlyTheExplicitEntityClassesUsedByTheProfile() {
         ExportConfig config = ExportConfig.fromEnvironment(Map.of());
-        assertEquals(java.util.List.of("CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy"),
+        assertEquals(java.util.List.of("CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy",
+                        "CDOTA_PlayerResource", "CDOTA_Unit_Hero_.*"),
                 config.asMap().get("entityClassPatterns"));
+        assertEquals(100L, config.asMap().get("positionSampleIntervalMilliseconds"));
+        assertEquals("match-analysis-v2", config.asMap().get("profile"));
     }
 }

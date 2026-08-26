@@ -61,11 +61,17 @@ export async function loadValidatedExtraction(validated: ValidatedExtraction): P
       try {
         await insertCatalog(database.connection, manifest, acquisition);
         await importStagedFiles(database.connection, extractionDir, manifest);
-        const storedCounts = await validateImportedRows(database.connection, extractionDir, manifest);
-        const importElapsed = Math.max(0, Math.round(performance.now() - loadStarted));
-        logPhase(manifest.extractionId, "duckdb_write", importElapsed, storedCounts.total);
+        const rawCounts = await validateImportedRows(database.connection, extractionDir, manifest);
         const summaryStarted = performance.now();
         await materializeMatchAnalysis(database.connection, manifest);
+        const heroPositions = await importHeroPositions(database.connection, extractionDir, manifest);
+        const storedCounts = {
+          ...rawCounts,
+          heroPositions,
+          total: rawCounts.total + heroPositions,
+        };
+        const importElapsed = Math.max(0, Math.round(performance.now() - loadStarted));
+        logPhase(manifest.extractionId, "duckdb_write", importElapsed, storedCounts.total);
         const summaryElapsed = Math.max(0, Math.round(performance.now() - summaryStarted));
         const summaryRows = await analysisRowCount(database.connection, manifest.extractionId);
         logPhase(manifest.extractionId, "summary", summaryElapsed, summaryRows);
@@ -114,7 +120,8 @@ async function analysisRowCount(connection: DuckDBConnection, extractionId: stri
        + (SELECT count(*) FROM analysis.player_items WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id)
-       + (SELECT count(*) FROM analysis.hero_draft_events WHERE extraction_id = $id) AS rows`,
+       + (SELECT count(*) FROM analysis.hero_draft_events WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.hero_position_samples WHERE extraction_id = $id) AS rows`,
     { id: extractionId },
   );
   return Number((result.getRowObjects()[0] as { rows: bigint }).rows);
@@ -269,7 +276,8 @@ async function importStagedFiles(connection: DuckDBConnection, dir: string, mani
       )`],
   ];
   for (const [logical, template] of imports) {
-    if (manifest.files[logical].records === 0) continue;
+    const entry = manifest.files[logical];
+    if (entry === undefined || entry.records === 0) continue;
     const file = path.join(dir, stagedFiles[logical]);
     try {
       await connection.run(template.replace("__FILE__", sqlLiteral(file)));
@@ -397,7 +405,8 @@ async function stagedCount(
   predicate?: string,
   joinRetainedEntity = false,
 ): Promise<bigint> {
-  if (manifest.files[logical].records === 0) return 0n;
+  const entry = manifest.files[logical];
+  if (entry === undefined || entry.records === 0) return 0n;
   const source = sqlLiteral(path.join(dir, stagedFiles[logical]));
   const join = joinRetainedEntity
     ? `JOIN raw.entity_instances AS instance
@@ -432,6 +441,185 @@ async function stagedBlobCount(
      )`,
   );
   return (result.getRowObjects()[0] as { count: bigint }).count;
+}
+
+async function importHeroPositions(
+  connection: DuckDBConnection,
+  dir: string,
+  manifest: Manifest,
+): Promise<number> {
+  const entry = manifest.files.heroPositions;
+  if (manifest.schemaVersion === 1 || entry === undefined || entry.records === 0) return 0;
+
+  const source = sqlLiteral(path.join(dir, stagedFiles.heroPositions));
+  await connection.run(`
+    CREATE OR REPLACE TEMP TABLE staged_hero_positions AS
+    SELECT
+      extractionId AS extraction_id,
+      sequence AS source_sequence,
+      demoTick AS source_demo_tick,
+      gameTimeMilliseconds AS source_game_time_milliseconds,
+      gamePlayerId AS source_game_player_id,
+      heroId AS source_hero_id,
+      teamId AS source_team_id,
+      worldX AS source_world_x,
+      worldY AS source_world_y,
+      try_cast(sequence AS UBIGINT) AS sequence,
+      try_cast(demoTick AS BIGINT) AS demo_tick,
+      try_cast(gameTimeMilliseconds AS UINTEGER) AS game_time_milliseconds,
+      try_cast(gamePlayerId AS UINTEGER) AS game_player_id,
+      try_cast(heroId AS INTEGER) AS hero_id,
+      try_cast(teamId AS INTEGER) AS team_id,
+      try_cast(worldX AS DOUBLE) AS world_x,
+      try_cast(worldY AS DOUBLE) AS world_y
+    FROM read_json(
+      '${source}',
+      format = 'newline_delimited',
+      columns = {
+        extractionId: 'VARCHAR',
+        sequence: 'VARCHAR',
+        demoTick: 'VARCHAR',
+        gameTimeMilliseconds: 'VARCHAR',
+        gamePlayerId: 'VARCHAR',
+        heroId: 'VARCHAR',
+        teamId: 'VARCHAR',
+        worldX: 'VARCHAR',
+        worldY: 'VARCHAR'
+      }
+    )
+  `);
+
+  const invalidResult = await connection.runAndReadAll(`
+    SELECT count(*) AS count
+    FROM staged_hero_positions
+    CROSS JOIN analysis.hero_map_world_bounds AS bounds
+    WHERE extraction_id IS NULL
+       OR extraction_id <> $id
+       OR NOT regexp_full_match(source_sequence, '[0-9]+')
+       OR sequence IS NULL
+       OR NOT regexp_full_match(source_demo_tick, '-?[0-9]+')
+       OR demo_tick IS NULL
+       OR NOT regexp_full_match(source_game_time_milliseconds, '[0-9]+')
+       OR game_time_milliseconds IS NULL
+       OR game_time_milliseconds % 100 <> 0
+       OR NOT regexp_full_match(source_game_player_id, '[0-9]+')
+       OR game_player_id IS NULL
+       OR game_player_id > 9
+       OR NOT regexp_full_match(source_hero_id, '[0-9]+')
+       OR hero_id IS NULL
+       OR hero_id <= 0
+       OR NOT regexp_full_match(source_team_id, '[0-9]+')
+       OR team_id NOT IN (2, 3)
+       OR world_x IS NULL
+       OR NOT isfinite(world_x)
+       OR world_x < bounds.minimum_x
+       OR world_x > bounds.maximum_x
+       OR world_y IS NULL
+       OR NOT isfinite(world_y)
+       OR world_y < bounds.minimum_y
+       OR world_y > bounds.maximum_y
+  `, { id: manifest.extractionId });
+  if ((invalidResult.getRowObjects()[0] as { count: bigint }).count !== 0n) {
+    throw new Error("Hero position rows contain an invalid field");
+  }
+
+  const rosterMismatch = await connection.runAndReadAll(`
+    WITH metadata_player_candidates AS MATERIALIZED (
+      SELECT
+        try_cast(json_extract_string(player.value, '$.game_player_id') AS UINTEGER)
+          AS game_player_id,
+        try_cast(json_extract_string(player.value, '$.player_slot') AS UINTEGER)
+          AS player_slot,
+        try_cast(json_extract_string(team.value, '$.dota_team') AS INTEGER)
+          AS team_id
+      FROM raw.records AS metadata,
+           json_each(metadata.payload, '$.metadata.teams') AS team,
+           json_each(team.value, '$.players') AS player
+      WHERE metadata.extraction_id = $id
+        AND metadata.record_type = 'CDOTAMatchMetadataFile'
+    ),
+    metadata_players AS MATERIALIZED (
+      SELECT
+        game_player_id,
+        min(player_slot) AS player_slot,
+        min(team_id) AS team_id
+      FROM metadata_player_candidates
+      WHERE game_player_id BETWEEN 0 AND 9
+        AND player_slot IS NOT NULL
+        AND team_id IN (2, 3)
+      GROUP BY game_player_id
+      HAVING count(*) = 1
+    ),
+    mapped_players AS MATERIALIZED (
+      SELECT
+        metadata.game_player_id,
+        roster.player_slot,
+        roster.hero_id,
+        roster.team_id
+      FROM metadata_players AS metadata
+      JOIN analysis.players AS roster
+        ON roster.extraction_id = $id
+       AND roster.player_slot = metadata.player_slot
+       AND roster.team_id = metadata.team_id
+    )
+    SELECT count(*) AS count
+    FROM staged_hero_positions AS position
+    LEFT JOIN mapped_players AS player
+      ON player.game_player_id = position.game_player_id
+    WHERE player.player_slot IS NULL
+       OR player.hero_id IS DISTINCT FROM position.hero_id
+       OR player.team_id IS DISTINCT FROM position.team_id
+  `, { id: manifest.extractionId });
+  if ((rosterMismatch.getRowObjects()[0] as { count: bigint }).count !== 0n) {
+    throw new Error("Hero position row does not agree with the match roster");
+  }
+
+  try {
+    await connection.run(`
+      WITH metadata_players AS MATERIALIZED (
+        SELECT
+          try_cast(json_extract_string(player.value, '$.game_player_id') AS UINTEGER)
+            AS game_player_id,
+          min(try_cast(json_extract_string(player.value, '$.player_slot') AS UINTEGER))
+            AS player_slot
+        FROM raw.records AS metadata,
+             json_each(metadata.payload, '$.metadata.teams') AS team,
+             json_each(team.value, '$.players') AS player
+        WHERE metadata.extraction_id = $id
+          AND metadata.record_type = 'CDOTAMatchMetadataFile'
+        GROUP BY game_player_id
+        HAVING count(*) = 1
+      )
+      INSERT INTO analysis.hero_position_samples
+      SELECT
+        $id,
+        position.sequence,
+        position.game_time_milliseconds,
+        metadata.player_slot,
+        position.hero_id,
+        position.team_id,
+        position.world_x::FLOAT,
+        position.world_y::FLOAT
+      FROM staged_hero_positions AS position
+      JOIN metadata_players AS metadata
+        ON metadata.game_player_id = position.game_player_id
+    `, { id: manifest.extractionId });
+  } catch (error) {
+    throw new Error(
+      `Failed importing heroPositions: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+
+  const stored = await connection.runAndReadAll(
+    "SELECT count(*) AS count FROM analysis.hero_position_samples WHERE extraction_id = $id",
+    { id: manifest.extractionId },
+  );
+  const count = (stored.getRowObjects()[0] as { count: bigint }).count;
+  if (count !== BigInt(entry.records)) {
+    throw new Error("Imported hero position count does not match the manifest");
+  }
+  return Number(count);
 }
 
 async function materializeMatchAnalysis(connection: DuckDBConnection, manifest: Manifest): Promise<void> {

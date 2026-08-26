@@ -213,6 +213,119 @@ test("loader normalizes valid draft events and counts them as analysis rows", as
   assert.match(logs, new RegExp(`ingestion=${draftExtractionId} phase=summary .* rows=14\\n`));
 });
 
+test("loader validates, maps, and stores 100 ms hero position rows", async () => {
+  const positionExtractionId = "6".repeat(64);
+  const positionMatchId = 48n;
+  const row = (value: Record<string, unknown>): string => `${JSON.stringify({
+    extractionId: positionExtractionId,
+    ...value,
+  })}\n`;
+  const rows: Record<string, string> = {
+    ...Object.fromEntries([...Object.keys(goodRows), "hero_positions.ndjson"].map((name) => [name, ""])),
+    "records.ndjson": [
+      row({
+        sequence: 1, demoTick: 1, netTick: null, gameTime: 1,
+        category: "match_overview", recordType: "CMsgDOTAMatch",
+        payload: {
+          match_id: positionMatchId.toString(), duration: 1,
+          players: [
+            { player_slot: 0, team_number: "DOTA_GC_TEAM_GOOD_GUYS", team_slot: 0, hero_id: 1 },
+            { player_slot: 128, team_number: "DOTA_GC_TEAM_BAD_GUYS", team_slot: 0, hero_id: 2 },
+          ],
+        },
+      }),
+      row({
+        sequence: 2, demoTick: 2, netTick: null, gameTime: 1,
+        category: "match_metadata", recordType: "CDOTAMatchMetadataFile",
+        payload: { version: 1, metadata: { teams: [
+          { dota_team: 2, players: [{ game_player_id: 7, player_slot: 0 }] },
+          { dota_team: 3, players: [{ game_player_id: 1, player_slot: 128 }] },
+        ] } },
+      }),
+    ].join(""),
+    "hero_positions.ndjson": [
+      row({ sequence: 10, demoTick: 100, gameTimeMilliseconds: 0, gamePlayerId: 7, heroId: 1, teamId: 2, worldX: -8288, worldY: 8288 }),
+      row({ sequence: 11, demoTick: 103, gameTimeMilliseconds: 100, gamePlayerId: 1, heroId: 2, teamId: 3, worldX: 12.5, worldY: -30.25 }),
+    ].join(""),
+  };
+
+  assert.equal((await loadClaimedExtraction(await stage(
+    positionExtractionId,
+    rows,
+    positionMatchId,
+    { schemaVersion: 2 },
+  ))).status, "loaded");
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(`
+      SELECT
+        (SELECT list({ player_slot: player_slot, game_time_milliseconds: game_time_milliseconds,
+                       hero_id: hero_id, team_id: team_id, world_x: world_x, world_y: world_y }
+                     ORDER BY game_time_milliseconds)
+         FROM analysis.hero_position_samples WHERE extraction_id = $id) AS positions,
+        (SELECT record_counts::VARCHAR FROM catalog.extractions WHERE extraction_id = $id) AS counts
+    `, { id: positionExtractionId });
+    const stored = result.getRowObjectsJson()[0] as { positions: unknown; counts: string };
+    assert.deepEqual(stored.positions, [
+      { player_slot: 0, game_time_milliseconds: 0, hero_id: 1, team_id: 2, world_x: -8288, world_y: 8288 },
+      { player_slot: 128, game_time_milliseconds: 100, hero_id: 2, team_id: 3, world_x: 12.5, world_y: -30.25 },
+    ]);
+    assert.equal(JSON.parse(stored.counts).heroPositions, 2);
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+});
+
+test("an invalid hero position rolls back the complete extraction", async () => {
+  const invalidExtractionId = "5".repeat(64);
+  const invalidMatchId = 49n;
+  const rows = Object.fromEntries(
+    [...Object.keys(goodRows), "hero_positions.ndjson"].map((name) => [name, ""]),
+  ) as Record<string, string>;
+  const row = (value: Record<string, unknown>): string => `${JSON.stringify({
+    extractionId: invalidExtractionId,
+    ...value,
+  })}\n`;
+  rows["records.ndjson"] = [
+    row({ sequence: 1, demoTick: 1, netTick: null, gameTime: 1, category: "match_overview", recordType: "CMsgDOTAMatch", payload: {
+      match_id: invalidMatchId.toString(), duration: 1,
+      players: [{ player_slot: 0, team_number: "DOTA_GC_TEAM_GOOD_GUYS", team_slot: 0, hero_id: 1 }],
+    } }),
+    row({ sequence: 2, demoTick: 2, netTick: null, gameTime: 1, category: "match_metadata", recordType: "CDOTAMatchMetadataFile", payload: {
+      version: 1, metadata: { teams: [{ dota_team: 2, players: [{ game_player_id: 0, player_slot: 0 }] }] },
+    } }),
+  ].join("");
+  rows["hero_positions.ndjson"] = row({
+    sequence: 10, demoTick: 100, gameTimeMilliseconds: 150, gamePlayerId: 0,
+    heroId: 1, teamId: 2, worldX: 0, worldY: 0,
+  });
+
+  await assert.rejects(loadClaimedExtraction(await stage(
+    invalidExtractionId,
+    rows,
+    invalidMatchId,
+    { schemaVersion: 2 },
+  )), /invalid field/);
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(`
+      SELECT
+        (SELECT count(*)::INTEGER FROM raw.records WHERE extraction_id = $id) AS raw_rows,
+        (SELECT count(*)::INTEGER FROM analysis.matches WHERE extraction_id = $id) AS matches,
+        (SELECT count(*)::INTEGER FROM analysis.hero_position_samples WHERE extraction_id = $id) AS positions
+    `, { id: invalidExtractionId });
+    assert.deepEqual(result.getRowObjectsJson(), [{ raw_rows: 0, matches: 0, positions: 0 }]);
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+});
+
 test("loader stores only retained rows and catalogs stored counts", async () => {
   const filteredId = "e".repeat(64);
   const filteredMatchId = 44n;
@@ -291,7 +404,7 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
     assert.equal(stored.exported_records, "3");
     assert.deepEqual(JSON.parse(stored.record_counts as string), {
       records: 2, combatEvents: 0, blobs: 3, entityInstances: 2, entityEvents: 3,
-      propertyUpdates: 2, checkpoints: 3, total: 15,
+      propertyUpdates: 2, checkpoints: 3, heroPositions: 0, total: 15,
     });
   } finally { connection.closeSync(); }
 });
@@ -471,6 +584,7 @@ async function stage(
     parser?: { name: string; version: string; upstreamRelease?: string; forkRevision?: string };
     exporterVersion?: string;
     acquisition?: Record<string, unknown>;
+    schemaVersion?: 1 | 2;
   } = {},
 ): Promise<{
   matchId: bigint;
@@ -485,6 +599,7 @@ async function stage(
   const logical: Record<string, string> = {
     records: "records.ndjson", combatEvents: "combat_events.ndjson", blobs: "blobs.ndjson", entityInstances: "entity_instances.ndjson",
     entityEvents: "entity_events.ndjson", propertyUpdates: "property_updates.ndjson", checkpoints: "checkpoints.ndjson",
+    heroPositions: "hero_positions.ndjson",
   };
   for (const [key, name] of Object.entries(logical)) {
     const body = rows[name] ?? "";
@@ -498,7 +613,7 @@ async function stage(
   }
   const now = new Date().toISOString();
   await writeFile(path.join(directory, "manifest.json"), JSON.stringify({
-    schemaVersion: 1, extractionId: id, matchId: stagedMatchId.toString(), replaySha256,
+    schemaVersion: identity.schemaVersion ?? 1, extractionId: id, matchId: stagedMatchId.toString(), replaySha256,
     parser: identity.parser ?? manifestParserIdentity,
     exporterVersion: identity.exporterVersion ?? parserIdentity.exporterVersion,
     config: { checkpointIntervalSeconds: 30, maxInputBytes: 2_147_483_648, maxOutputBytes: 12_884_901_888, maxRecords: 50_000_000, timeoutSeconds: 1_800 },

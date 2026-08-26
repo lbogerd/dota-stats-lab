@@ -6,6 +6,7 @@ if (!inputFile || !outputFile) throw new Error("Usage: render-benchmark.mjs RESU
 const report = JSON.parse(await readFile(inputFile, "utf8"));
 const groups = Map.groupBy(report.runs.filter((run) => run.kind === "measured"), (run) => run.label);
 const gpmWindowSeconds = report.configuration?.gpmWindowSeconds ?? 60;
+const heatmapRangeSeconds = report.configuration?.heatmapRangeSeconds ?? 300;
 const lines = [
   "# Dota replay ingestion benchmark",
   "",
@@ -36,6 +37,25 @@ for (const [label, runs] of groups) {
 
 lines.push(
   "",
+  "## Hero position and heat-map measurements",
+  "",
+  "| Replay | Match | Positions | Stored | Position output | Total output | Warehouse | Cold heat map | Warm heat map | API response | Response |",
+  "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+);
+
+for (const [label, runs] of groups) {
+  const first = runs[0];
+  const positionOutputBytes = medianOptional(runs, "positionOutputBytes");
+  const totalOutputBytes = medianOptional(runs, "outputBytes");
+  const outputWithShare = positionOutputBytes == null
+    ? "not measured"
+    : `${formatMiB(positionOutputBytes)}${totalOutputBytes > 0 ? ` (${formatPercent(positionOutputBytes / totalOutputBytes)})` : ""}`;
+  const availability = runs.map((run) => run.positions?.available).find((value) => value != null);
+  lines.push(`| ${label} | ${first.matchId} | ${formatOptionalInteger(medianOptional(runs, "positionExportedRows"))} | ${formatOptionalInteger(medianOptional(runs, "positionStoredRows"))} | ${outputWithShare} | ${formatOptionalBytes(totalOutputBytes)} | ${formatOptionalBytes(medianOptional(runs, "warehouseBytes"))} | ${availability === false ? "unavailable" : formatOptionalMilliseconds(medianNested(runs, "positions", "coldMs"))} | ${availability === false ? "unavailable" : formatOptionalMilliseconds(medianNested(runs, "positions", "warmMedianMs"))} | ${availability === false ? "unavailable" : formatOptionalMilliseconds(medianNested(runs, "positions", "responseMs"))} | ${availability === false ? "unavailable" : formatOptionalResponseBytes(medianNested(runs, "positions", "responseBytes"))} |`);
+}
+
+lines.push(
+  "",
   "## Granular GPM measurements",
   "",
   "| Replay | Match | Gold events | Warehouse | Cold GPM | Warm GPM | 1s response | Max final GPM diff | Browser render p95 |",
@@ -59,7 +79,13 @@ lines.push(
   "- Complete time is parser-container wall time plus loader-container wall time. Report generation and HTTP probes are excluded.",
   "- Peak RSS is the largest sum of process RSS observed with `docker top` in either ingestion container at 200 ms intervals; a narrow spike between samples may be missed.",
   "- The overview result uses one unmeasured warm request followed by 30 sequential loopback HTTP requests.",
-  "- Warehouse size is the exact DuckDB file size after loading one match into a fresh database and before running GPM probes.",
+  "- Warehouse size is the exact DuckDB file size after loading one match into a fresh database and before running query probes.",
+  "- Position output is the exact byte size of `hero_positions.ndjson`; its percentage is its share of all exported NDJSON bytes.",
+  "- Exported position rows come from the parser manifest. Stored position rows come from `analysis.hero_position_samples` after loading.",
+  `- Heat-map latency uses all heroes in a ${heatmapRangeSeconds}-second range centered in the match, or the full match when it is shorter, on a 64 by 64 grid. Times accept 100 ms increments.`,
+  "- Cold heat-map latency is the first macro query on a new read-only DuckDB connection. Warm heat-map latency is the median of repeated materialized queries on that connection.",
+  "- The heat-map API measurement includes its read-only connection, availability query, macro query, and response assembly. Response size is UTF-8 JSON bytes.",
+  "- A schema-version-1 extraction has no position file. The benchmark reports its position metrics as unavailable and continues to run the existing GPM validations.",
   "- Cold GPM is the first rolling-macro query on a new read-only DuckDB connection. Warm GPM is the median of repeated materialized queries on that same connection.",
   `- The GPM response size is the UTF-8 JSON byte length of the grouped ${gpmWindowSeconds}-second-window response at a one-second output step.`,
   "- The real-replay validation requires ten non-empty player series, two non-empty complete-team series, and five players per team when the match is at least as long as the selected window.",
@@ -121,6 +147,10 @@ function formatOptionalMilliseconds(value) {
 
 function formatOptionalGpmDifference(value) {
   return value == null ? "not measured" : `${Number(value).toFixed(2)} GPM`;
+}
+
+function formatPercent(value) {
+  return `${(Number(value) * 100).toFixed(1)}%`;
 }
 
 function formatGiB(bytes) {

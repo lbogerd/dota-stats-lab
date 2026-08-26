@@ -1,15 +1,27 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { MatchRollingGpm, RollingGpmWindowSeconds } from "../server/gpm.js";
 import type { MatchListItem, MatchOverview } from "../server/overview.js";
-import { getMatchOverviewFn, getMatchRollingGpmFn, listMatchOverviewsFn } from "./functions.js";
+import type { MatchHeroHeatmap } from "../server/hero-positions.js";
+import {
+  getMatchHeroHeatmapFn,
+  getMatchOverviewFn,
+  getMatchRollingGpmFn,
+  listMatchOverviewsFn,
+} from "./functions.js";
 
-export type { MatchListItem, MatchOverview, MatchRollingGpm };
+export type { MatchHeroHeatmap, MatchListItem, MatchOverview, MatchRollingGpm };
 
 export const overviewQueryKeys = {
   matches: ["match-overviews"] as const,
   match: (matchId: string) => ["match-overviews", matchId] as const,
   gpm: (matchId: string, windowSeconds: number, outputStepSeconds: number) =>
     ["match-rolling-gpm", matchId, windowSeconds, outputStepSeconds] as const,
+  heroHeatmap: (
+    matchId: string,
+    startMilliseconds: number,
+    endMilliseconds: number,
+    playerSlot: number | null,
+  ) => ["match-hero-heatmap", matchId, startMilliseconds, endMilliseconds, playerSlot] as const,
 };
 
 export const matchOverviewsQuery = () => queryOptions({
@@ -30,6 +42,23 @@ export const matchRollingGpmQuery = (
   queryKey: overviewQueryKeys.gpm(matchId, windowSeconds, outputStepSeconds),
   queryFn: (): Promise<MatchRollingGpm> => getMatchRollingGpmFn({
     data: { matchId, windowSeconds, outputStepSeconds },
+  }),
+});
+
+export const matchHeroHeatmapQuery = (
+  matchId: string,
+  startMilliseconds: number,
+  endMilliseconds: number,
+  playerSlot: number | null,
+) => queryOptions({
+  queryKey: overviewQueryKeys.heroHeatmap(
+    matchId,
+    startMilliseconds,
+    endMilliseconds,
+    playerSlot,
+  ),
+  queryFn: (): Promise<MatchHeroHeatmap> => getMatchHeroHeatmapFn({
+    data: { matchId, startMilliseconds, endMilliseconds, playerSlot },
   }),
 });
 

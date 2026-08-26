@@ -11,11 +11,15 @@ export const stagedFiles = {
   entityEvents: "entity_events.ndjson",
   propertyUpdates: "property_updates.ndjson",
   checkpoints: "checkpoints.ndjson",
+  heroPositions: "hero_positions.ndjson",
 } as const;
 
 type FileEntry = { path: string; sha256: string; bytes: number; records: number };
+type StagedFile = keyof typeof stagedFiles;
+type LegacyStagedFile = Exclude<StagedFile, "heroPositions">;
+type ManifestFiles = Record<LegacyStagedFile, FileEntry> & Partial<Record<"heroPositions", FileEntry>>;
 export type Manifest = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   extractionId: string;
   matchId: string;
   replaySha256: string;
@@ -33,7 +37,7 @@ export type Manifest = {
   preparationElapsedMs?: number;
   parsingElapsedMs?: number;
   profile?: string;
-  files: Record<keyof typeof stagedFiles, FileEntry>;
+  files: ManifestFiles;
   counts: Record<string, number>;
   acquisition?: Record<string, unknown>;
 };
@@ -42,7 +46,9 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
   const raw = await readFile(path.join(extractionDir, "manifest.json"), "utf8");
   const value: unknown = JSON.parse(raw);
   if (!isObject(value)) throw new Error("Manifest must be a JSON object");
-  if (value.schemaVersion !== 1) throw new Error("Unsupported manifest schemaVersion");
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2) {
+    throw new Error("Unsupported manifest schemaVersion");
+  }
   const extractionId = stringField(value, "extractionId");
   if (!/^[a-f0-9]{64}$/.test(extractionId)) throw new Error("Invalid extractionId");
   if (stringField(value, "matchId") !== expectedMatchId.toString()) throw new Error("Manifest matchId mismatch");
@@ -63,7 +69,10 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
 
   let totalBytes = 0;
   let totalRecords = 0;
-  for (const [logical, expectedName] of Object.entries(stagedFiles)) {
+  const requiredFiles = value.schemaVersion === 1
+    ? Object.entries(stagedFiles).filter(([logical]) => logical !== "heroPositions")
+    : Object.entries(stagedFiles);
+  for (const [logical, expectedName] of requiredFiles) {
     const entry = value.files[logical];
     if (!isObject(entry) || stringField(entry, "path") !== expectedName) throw new Error(`Invalid manifest file entry: ${logical}`);
     const expectedHash = stringField(entry, "sha256");
@@ -78,13 +87,15 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
   const maxRecords = numberField(value.config, "maxRecords");
   if (totalBytes > maxOutputBytes) throw new Error("Staged files exceed manifest output limit");
   if (totalRecords > maxRecords) throw new Error("Staged files exceed manifest record limit");
+  if (value.schemaVersion === 1) delete value.files.heroPositions;
   return value as unknown as Manifest;
 }
 
 export async function validateManifest(extractionDir: string, expectedMatchId: bigint): Promise<Manifest> {
   const manifest = await readManifest(extractionDir, expectedMatchId);
-  for (const [logical, expectedName] of Object.entries(stagedFiles)) {
-    const expected = manifest.files[logical as keyof typeof stagedFiles];
+  for (const [logical, expectedName] of manifestFileEntries(manifest)) {
+    const expected = manifest.files[logical];
+    if (expected === undefined) continue;
     const file = path.join(extractionDir, expectedName);
     const info = await stat(file);
     if (!info.isFile() || info.size !== expected.bytes) throw new Error(`Size mismatch for ${expectedName}`);
@@ -95,6 +106,12 @@ export async function validateManifest(extractionDir: string, expectedMatchId: b
     if (actual.records !== expected.records) throw new Error(`Record count mismatch for ${expectedName}`);
   }
   return manifest;
+}
+
+export function manifestFileEntries(manifest: Manifest): Array<[StagedFile, string]> {
+  return Object.entries(stagedFiles).filter(
+    ([logical]) => logical !== "heroPositions" || manifest.schemaVersion === 2,
+  ) as Array<[StagedFile, string]>;
 }
 
 async function inspectFile(file: string): Promise<{
