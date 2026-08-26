@@ -1,6 +1,6 @@
-export const selectionGroups = ["priority", "control", "fill"] as const;
+import type { SelectionGroup } from "../jobs/job-files.js";
 
-export type SelectionGroup = typeof selectionGroups[number];
+export type { SelectionGroup } from "../jobs/job-files.js";
 
 export type MatchCandidate = {
   matchId: string;
@@ -29,4 +29,3 @@ export type WindowSummary = {
   target: number;
   underTarget: boolean;
 };
-
