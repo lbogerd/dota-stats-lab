@@ -123,7 +123,7 @@ test("mobile user can open a real match overview", async ({ page }) => {
     await expect(probabilityReady.or(probabilityUnavailable)).toBeVisible();
   }
   if (await probabilityReady.isVisible()) {
-    const probabilityChart = probabilityReady.getByRole("group", { name: /Valve win probability.*interactive line chart/i });
+    const probabilityChart = probabilityReady.getByRole("img", { name: /Valve win probability.*interactive line chart/i });
     await probabilityChart.focus();
     await expect(probabilityChart).toBeFocused();
     await probabilityChart.press("Home");

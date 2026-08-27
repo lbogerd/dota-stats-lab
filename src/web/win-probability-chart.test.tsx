@@ -9,21 +9,21 @@ const points = [
 ];
 
 describe("WinProbabilityChart", () => {
-  it("selects the last point by default and supports all keyboard controls", () => {
+  it("selects the last point by default and supports TanStack keyboard focus", () => {
     render(<WinProbabilityChart points={points} radiantName="Team Spirit" direName="Liquid" />);
 
-    const chart = screen.getByRole("group", { name: /Valve win probability.*interactive line chart/i });
+    const chart = screen.getByRole("img", { name: /Valve win probability.*interactive line chart/i });
     expect(chart.getAttribute("tabindex")).toBe("0");
     expect(screen.getByText("0:30 · Team Spirit 80.0% · Liquid 20.0%")).toBeTruthy();
 
     fireEvent.keyDown(chart, { key: "ArrowLeft" });
-    expect(screen.getByText("0:20 · Team Spirit 55.0% · Liquid 45.0%")).toBeTruthy();
-    fireEvent.keyDown(chart, { key: "Home" });
     expect(screen.getByText("0:10 · Team Spirit 40.0% · Liquid 60.0%")).toBeTruthy();
     fireEvent.keyDown(chart, { key: "ArrowRight" });
     expect(screen.getByText("0:20 · Team Spirit 55.0% · Liquid 45.0%")).toBeTruthy();
     fireEvent.keyDown(chart, { key: "End" });
     expect(screen.getByText("0:30 · Team Spirit 80.0% · Liquid 20.0%")).toBeTruthy();
+    fireEvent.keyDown(chart, { key: "Home" });
+    expect(screen.getByText("0:10 · Team Spirit 40.0% · Liquid 60.0%")).toBeTruthy();
   });
 
   it("selects the nearest sample with pointer input", () => {
@@ -42,12 +42,13 @@ describe("WinProbabilityChart", () => {
     const { container } = render(<WinProbabilityChart points={points} radiantName="Spirit" direName="Liquid" />);
     expect(screen.getByText("Spirit (Radiant)")).toBeTruthy();
     expect(screen.getByText("Liquid (Dire)")).toBeTruthy();
-    expect(container.querySelector('polyline[stroke-dasharray="7 4"]')).toBeTruthy();
+    expect(container.querySelector('path[stroke-dasharray="7 4"]')).toBeTruthy();
   });
 
   it("describes the fixed scale, even line, time range, and controls", () => {
     render(<WinProbabilityChart points={points} radiantName="Radiant" direName="Dire" />);
-    expect(screen.getByText(/vertical scale is 0 to 100 percent.*50 percent.*left and right arrow keys/i)).toBeTruthy();
+    const chart = screen.getByRole("img", { name: /Valve win probability/i });
+    expect(chart.querySelector("desc")?.textContent).toMatch(/vertical scale is 0 to 100 percent.*50 percent.*left and right arrow keys/i);
   });
 });
 

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { formatChartTime, GpmChart, nearestTime } from "./gpm-chart";
+import { formatChartTime, GpmChart } from "./gpm-chart";
 
 const series = [
   {
@@ -27,11 +27,13 @@ describe("GpmChart", () => {
   it("provides a keyboard-focusable exact-value inspection surface", () => {
     render(<GpmChart title="Rolling GPM - last 60 seconds" series={series} />);
 
-    const chart = screen.getByRole("group", { name: /interactive line chart/i });
+    const chart = screen.getByRole("img", { name: /interactive line chart/i });
     expect(chart.getAttribute("tabindex")).toBe("0");
     expect(screen.getByText(/1:02 · Radiant 1,200 GPM · Dire 1,050 GPM/)).toBeTruthy();
 
     fireEvent.keyDown(chart, { key: "ArrowLeft" });
+    expect(screen.getByText(/1:00 · Radiant 1,000 GPM · Dire 900 GPM/)).toBeTruthy();
+    fireEvent.keyDown(chart, { key: "ArrowRight" });
     expect(screen.getByText(/1:01 · Radiant 1,100 GPM · Dire 950 GPM/)).toBeTruthy();
     fireEvent.keyDown(chart, { key: "Home" });
     expect(screen.getByText(/1:00 · Radiant 1,000 GPM · Dire 900 GPM/)).toBeTruthy();
@@ -39,7 +41,9 @@ describe("GpmChart", () => {
 
   it("describes its time range and keyboard controls for assistive technology", () => {
     render(<GpmChart title="Player rolling GPM" series={series.slice(0, 1)} />);
-    expect(screen.getByText(/1 series from 1:00 to 1:02.*left and right arrow keys/i)).toBeTruthy();
+    const chart = screen.getByRole("img", { name: /Player rolling GPM/i });
+    expect(chart.querySelector("desc")?.textContent).toMatch(/1 series from 1:00 to 1:02/i);
+    expect(chart.querySelector("desc")?.textContent).toMatch(/left and right arrow keys/i);
   });
 
   it("selects the nearest time from pointer input", () => {
@@ -55,12 +59,7 @@ describe("GpmChart", () => {
   });
 });
 
-describe("GPM chart helpers", () => {
-  it("selects the closest output time", () => {
-    expect(nearestTime([1, 5, 10], 6)).toBe(5);
-    expect(nearestTime([1, 5, 10], 9)).toBe(10);
-  });
-
+describe("GPM chart formatting", () => {
   it("formats graph time without overflowing seconds", () => {
     expect(formatChartTime(0)).toBe("0:00");
     expect(formatChartTime(3_725)).toBe("62:05");

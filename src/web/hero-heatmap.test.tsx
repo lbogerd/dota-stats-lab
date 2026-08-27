@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import type { MatchHeroHeatmap } from "../server/hero-positions";
 import { heatCellIntensity, HeroHeatmap } from "./hero-heatmap";
 
@@ -11,22 +11,20 @@ describe("HeroHeatmap", () => {
     expect(heatCellIntensity(200, 100)).toBe(1);
   });
 
-  it("draws cells on a device-pixel-ratio canvas", () => {
-    const fillRect = vi.fn();
-    const clearRect = vi.fn();
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ fillRect, clearRect } as unknown as CanvasRenderingContext2D);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      width: 640, height: 640, x: 0, y: 0, top: 0, right: 640, bottom: 640, left: 0, toJSON: () => ({}),
-    });
+  it("renders density cells with TanStack Charts over the map", () => {
     const cells: MatchHeroHeatmap["cells"] = [{ cellX: 2, cellY: 3, sampleCount: 25 }];
 
     const { container } = render(<HeroHeatmap cells={cells} maximumCellCount={100} />);
 
-    const canvas = container.querySelector("canvas")!;
     const mapImage = container.querySelector("img")!;
-    expect(canvas.width).toBe(640);
-    expect(canvas.height).toBe(640);
-    expect(fillRect).toHaveBeenCalledWith(20, 30, 10.5, 10.5);
+    const chart = screen.getByRole("img", { name: /hero position density heat map/i });
+    const densityCell = container.querySelector('[data-ts-key*="2-3"]');
+    expect(chart.getAttribute("aria-roledescription")).toBe("chart");
+    expect(densityCell?.getAttribute("x")).toBe("20");
+    expect(densityCell?.getAttribute("y")).toBe("30");
+    expect(densityCell?.getAttribute("width")).toBe("10");
+    expect(densityCell?.getAttribute("height")).toBe("10");
+    expect(densityCell?.getAttribute("fill")).toBe("rgba(247, 167, 65, 0.54)");
     expect(mapImage.style.filter).toBe("saturate(0.15)");
   });
 });

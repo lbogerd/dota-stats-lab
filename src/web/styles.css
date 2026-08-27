@@ -61,6 +61,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   transition: background-color 150ms ease;
 }
 .overview-primary-link:hover { background: #234636; }
+.dota-gpm-chart,
+.dota-win-probability-chart {
+  --ts-chart-tooltip-background: rgba(251, 250, 245, 0.98);
+  --ts-chart-tooltip-color: #1d2923;
+  --ts-chart-tooltip-border: 1px solid #d8ddd5;
+  --ts-chart-tooltip-border-radius: 0.625rem;
+  --ts-chart-tooltip-shadow: 0 12px 30px rgba(29, 41, 35, 0.14);
+}
+.dota-heatmap-chart {
+  --ts-chart-tooltip-background: rgba(29, 41, 35, 0.94);
+  --ts-chart-tooltip-color: white;
+  --ts-chart-tooltip-border: 1px solid rgba(255, 255, 255, 0.2);
+  --ts-chart-tooltip-border-radius: 0.625rem;
+  --ts-chart-tooltip-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
 .roster-table th:not(:first-child),
 .roster-table td { padding: 0.75rem 0.85rem; }
 .roster-table tbody td,
