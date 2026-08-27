@@ -1,6 +1,6 @@
 # Dota Replay Data Lab
 
-This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), and hero position heat maps.
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), and hero position heat maps. TanStack Charts renders every graph and heat map.
 
 The default `match-analysis-v3` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
@@ -224,7 +224,7 @@ The update command stores the unmodified Valve response under `data/dota/items/s
 
 ## TanStack package decisions
 
-The implementation follows the current official [TanStack Start](https://tanstack.com/start/latest), [Router](https://tanstack.com/router/latest), and [Query](https://tanstack.com/query/latest) documentation.
+The implementation follows the current official [TanStack Start](https://tanstack.com/start/latest), [Router](https://tanstack.com/router/latest), [Query](https://tanstack.com/query/latest), and [Charts](https://tanstack.com/charts/latest) documentation.
 
 | Package | Decision | Reason |
 |---|---|---|
@@ -232,18 +232,18 @@ The implementation follows the current official [TanStack Start](https://tanstac
 | Query | selected | loader hydration, remote-state caching, and job polling lifecycle |
 | Table | rejected | match lists are small and each roster has ten rows; semantic HTML is less code |
 | Form | rejected | ingestion is one validated field, so its abstraction would add more code than it removes |
-| Charts | package rejected | a small reusable SVG line chart preserves exact unsmoothed GPM values, pointer/keyboard inspection, and mobile sizing without another dependency |
+| Charts | selected | typed `lineY`, `ruleY`, and `cell` marks render the Valve probability and unsmoothed rolling-GPM graphs plus the 64×64 hero-position heat map with responsive SVG, shared scales, tooltips, and keyboard focus |
 | Virtual | rejected | no normal list is long enough to justify virtualization |
 | Pacer | rejected | a small `refetchInterval` plus provider-specific `Retry-After` logic is clearer |
 | Store | rejected | Query owns remote state and no substantial shared client state remains |
 | DB | rejected | DuckDB is authoritative and the small UI does not need a reactive client collection |
 | Devtools | rejected | production deployment does not need a diagnostics bundle; existing browser/server tools suffice |
 
-Package versions are pinned in `package.json` and `pnpm-lock.yaml`. No experimental TanStack package is required.
+Package versions are pinned in `package.json` and `pnpm-lock.yaml`.
 
 ## Tests and real replay fixtures
 
-Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM analysis, hero-position grids, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, GPM query keys, chart interaction, heat-map controls and drawing, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile GPM and heat-map states.
+Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM and win-probability analysis, hero-position grids, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, query keys, TanStack chart interaction, heat-map controls and rendering, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, server win-probability capture, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile probability, GPM, and heat-map states.
 
 Large or unlicensed replays are never committed. To use your own parser fixture, keep it outside Git and run:
 
