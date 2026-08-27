@@ -18,8 +18,11 @@ describe("HeroHeatmap", () => {
 
     const mapImage = container.querySelector("img")!;
     const chart = screen.getByRole("img", { name: /hero position density heat map/i });
+    const chartHost = chart.closest<HTMLElement>(".ts-chart-host")!;
     const densityCell = container.querySelector('[data-ts-key*="2-3"]');
     expect(chart.getAttribute("aria-roledescription")).toBe("chart");
+    expect(chartHost.style.position).toBe("absolute");
+    expect(chartHost.style.inset).toBe("0px");
     expect(densityCell?.getAttribute("x")).toBe("20");
     expect(densityCell?.getAttribute("y")).toBe("30");
     expect(densityCell?.getAttribute("width")).toBe("10");

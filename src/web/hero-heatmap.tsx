@@ -81,8 +81,8 @@ export function HeroHeatmap({ cells, maximumCellCount }: {
         definition={definition}
         aspectRatio={1}
         initialWidth={640}
-        className="dota-heatmap-chart absolute inset-0"
-        style={{ width: "100%", height: "100%" }}
+        className="dota-heatmap-chart"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
         ariaLabel="Hero position density heat map"
         ariaDescription="A 64 by 64 grid overlays the Dota battlefield map. Brighter orange cells contain more position samples."
       />
