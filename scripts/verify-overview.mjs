@@ -7,6 +7,10 @@ const browserRenderSampleCount = positiveInteger(
   process.env.BENCHMARK_BROWSER_RENDER_SAMPLES ?? "3",
   "BENCHMARK_BROWSER_RENDER_SAMPLES",
 );
+const requireWinProbability = booleanFlag(
+  process.env.BENCHMARK_REQUIRE_WIN_PROBABILITY ?? "0",
+  "BENCHMARK_REQUIRE_WIN_PROBABILITY",
+);
 const measureAcknowledgement = booleanFlag(process.env.BENCHMARK_ACKNOWLEDGEMENT ?? "1", "BENCHMARK_ACKNOWLEDGEMENT");
 const overviewUrl = `${baseUrl}/matches/${matchId}`;
 
@@ -43,17 +47,20 @@ try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     const started = performance.now();
     await page.goto(overviewUrl, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", { name: "Granular GPM" }).waitFor({ state: "visible", timeout: 30_000 });
-    await page.getByText(/^Rolling GPM - last \d+ seconds$/)
-      .or(page.getByText(/Granular gold data is unavailable for this extraction/))
-      .first().waitFor({ state: "visible", timeout: 30_000 });
+    await page.getByRole("heading", { name: "Valve win probability" }).waitFor({ state: "visible", timeout: 30_000 });
+    const probabilityState = requireWinProbability
+      ? page.getByTestId("win-probability-ready")
+      : page.getByTestId("win-probability-ready").or(page.getByTestId("win-probability-unavailable")).first();
+    await probabilityState.waitFor({ state: "visible", timeout: 30_000 });
     samplesMs.push(performance.now() - started);
     await page.close();
   }
   const sortedBrowserSamples = [...samplesMs].sort((left, right) => left - right);
   browserRender = {
     available: true,
-    definition: "fresh mobile navigation through visible granular GPM graph or unavailable state",
+    definition: requireWinProbability
+      ? "fresh mobile navigation through visible Valve win-probability graph"
+      : "fresh mobile navigation through visible Valve win-probability graph or unavailable state",
     samples: browserRenderSampleCount,
     samplesMs: samplesMs.map(round),
     medianMs: round(percentile(sortedBrowserSamples, 0.5)),

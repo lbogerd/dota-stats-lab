@@ -14,6 +14,7 @@ import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
 import { getMatchRollingGpm, rollingGpmInputSchema } from "../server/gpm.js";
 import { listHeroStats } from "../server/hero-stats.js";
 import { getMatchHeroHeatmap, heroHeatmapInputSchema } from "../server/hero-positions.js";
+import { getMatchWinProbability, winProbabilityInputSchema } from "../server/win-probability.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
 
 export const listSavedQueriesFn = createServerFn({ method: "GET" })
@@ -67,6 +68,10 @@ export const getMatchRollingGpmFn = createServerFn({ method: "GET" })
 export const getMatchHeroHeatmapFn = createServerFn({ method: "GET" })
   .validator(heroHeatmapInputSchema)
   .handler(({ data }) => getMatchHeroHeatmap(data));
+
+export const getMatchWinProbabilityFn = createServerFn({ method: "GET" })
+  .validator(winProbabilityInputSchema)
+  .handler(({ data }) => getMatchWinProbability(data));
 
 export const listHeroStatsFn = createServerFn({ method: "GET" })
   .handler(() => listHeroStats());

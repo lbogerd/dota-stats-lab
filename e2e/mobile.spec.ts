@@ -114,6 +114,23 @@ test("mobile user can open a real match overview", async ({ page }) => {
   await expect(page.locator("h1")).toHaveText(/^#[1-9][0-9]*$/);
   await expect(page.getByText("Winning team:", { exact: false })).toBeVisible();
   await expect(page.getByText("DuckDB analysis", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Valve win probability" })).toBeVisible();
+  const probabilityReady = page.getByTestId("win-probability-ready");
+  const probabilityUnavailable = page.getByTestId("win-probability-unavailable");
+  if (process.env.E2E_REQUIRE_WIN_PROBABILITY === "1") {
+    await expect(probabilityReady).toBeVisible();
+  } else {
+    await expect(probabilityReady.or(probabilityUnavailable)).toBeVisible();
+  }
+  if (await probabilityReady.isVisible()) {
+    const probabilityChart = probabilityReady.getByRole("group", { name: /Valve win probability.*interactive line chart/i });
+    await probabilityChart.focus();
+    await expect(probabilityChart).toBeFocused();
+    await probabilityChart.press("Home");
+    await probabilityChart.press("ArrowRight");
+    await probabilityChart.press("End");
+    await probabilityChart.press("ArrowLeft");
+  }
   await expect(page.getByRole("heading", { name: "Granular GPM" })).toBeVisible();
   const gpmWindow = page.getByLabel("Rolling GPM window");
   await expect(gpmWindow).toHaveValue("60");

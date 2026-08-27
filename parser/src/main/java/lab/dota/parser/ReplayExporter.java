@@ -24,7 +24,7 @@ import java.util.Map;
 
 /** Compact, analysis-oriented default extraction profile. */
 final class ReplayExporter {
-    static final String PROFILE = "match-analysis-v2";
+    static final String PROFILE = "match-analysis-v3";
     private static final Logger log = LoggerFactory.getLogger(ReplayExporter.class);
 
     private final String extractionId;
@@ -36,12 +36,14 @@ final class ReplayExporter {
     private int metadataTick;
     private long timelineSequence;
     private long heroPositionSequence;
+    private long winProbabilitySequence;
     private long entitySequence;
     private int demoTick;
     private final Map<Long, String> teamDataIds = new HashMap<>();
     private final GameClock gameClock = new GameClock();
     private final GoldTimeline goldTimeline = new GoldTimeline();
     private final HeroPositionTimeline heroPositionTimeline = new HeroPositionTimeline();
+    private final WinProbabilityTimeline winProbabilityTimeline = new WinProbabilityTimeline();
     private boolean gameEnded;
 
     ReplayExporter(String extractionId, NdjsonSet output, ExportConfig config, Instant startedAt) {
@@ -66,6 +68,7 @@ final class ReplayExporter {
         }
         if (message.hasDuration() && message.getDuration() > 0) {
             heroPositionTimeline.markGameEnded((double) message.getDuration());
+            winProbabilityTimeline.observeMatchDuration(message.getDuration());
         }
     }
 
@@ -220,6 +223,30 @@ final class ReplayExporter {
         for (int i = 0; i < count; i++) observePlayerResourceProperty(entity, paths[i]);
     }
 
+    @OnEntityCreated(classPattern = "CDOTA_DataSpectator")
+    public void onSpectatorDataCreated(Context context, Entity entity) {
+        touch(context);
+        observeSpectatorDataState(entity);
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTA_DataSpectator")
+    public void onSpectatorDataUpdated(Context context, Entity entity, FieldPath[] paths, int count) {
+        touch(context);
+        for (int i = 0; i < count; i++) observeSpectatorDataProperty(entity, paths[i]);
+    }
+
+    @OnEntityCreated(classPattern = "CDOTASpectatorGraphManagerProxy")
+    public void onSpectatorGraphCreated(Context context, Entity entity) {
+        touch(context);
+        observeSpectatorGraphState(entity);
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTASpectatorGraphManagerProxy")
+    public void onSpectatorGraphUpdated(Context context, Entity entity, FieldPath[] paths, int count) {
+        touch(context);
+        for (int i = 0; i < count; i++) observeSpectatorGraphProperty(entity, paths[i]);
+    }
+
     @OnEntityCreated(classPattern = "CDOTA_Unit_Hero_.*")
     public void onHeroCreated(Context context, Entity entity) {
         touch(context);
@@ -242,6 +269,7 @@ final class ReplayExporter {
     @OnTickEnd
     public void onTickEnd(Context context, boolean synthetic) throws IOException {
         touch(context);
+        winProbabilityTimeline.finishTick(gameClock.gameTime());
         for (GoldTimeline.GoldUpdate update : goldTimeline.finishTick(gameClock.gameTime())) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("extractionId", extractionId);
@@ -312,6 +340,30 @@ final class ReplayExporter {
                 entity.getUid(), path, entity.getPropertyForFieldPath(fieldPath));
     }
 
+    private void observeSpectatorDataState(Entity entity) {
+        if (entity.getState() == null) return;
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) observeSpectatorDataProperty(entity, iterator.next());
+    }
+
+    private void observeSpectatorDataProperty(Entity entity, FieldPath fieldPath) {
+        String path = entity.getDtClass().getNameForFieldPath(fieldPath);
+        winProbabilityTimeline.observeSpectatorProperty(
+                path, entity.getPropertyForFieldPath(fieldPath));
+    }
+
+    private void observeSpectatorGraphState(Entity entity) {
+        if (entity.getState() == null) return;
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) observeSpectatorGraphProperty(entity, iterator.next());
+    }
+
+    private void observeSpectatorGraphProperty(Entity entity, FieldPath fieldPath) {
+        String path = entity.getDtClass().getNameForFieldPath(fieldPath);
+        winProbabilityTimeline.observeGraphProperty(
+                path, entity.getPropertyForFieldPath(fieldPath));
+    }
+
     private void observeTeamDataState(String instanceId, Entity entity) {
         if (entity.getState() == null) return;
         var iterator = entity.getState().fieldPathIterator();
@@ -348,8 +400,17 @@ final class ReplayExporter {
         if (metadata == null) throw new IOException("replay does not contain CDOTAMatchMetadataFile");
         writeRecord(1, matchTick, "match_overview", match);
         writeRecord(2, metadataTick, "match_metadata", metadata);
-        log.info("profile={} exported 2 match documents, {} timeline events, and {} hero positions",
-                PROFILE, timelineSequence, heroPositionSequence);
+        for (WinProbabilityTimeline.Sample sample : winProbabilityTimeline.samples()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("extractionId", extractionId);
+            row.put("sampleIndex", winProbabilitySequence++);
+            row.put("gameTimeSeconds", sample.gameTimeSeconds());
+            row.put("radiantProbability", sample.radiantProbability());
+            row.put("source", sample.source());
+            output.write("winProbability", row);
+        }
+        log.info("profile={} exported 2 match documents, {} timeline events, {} hero positions, and {} win-probability samples",
+                PROFILE, timelineSequence, heroPositionSequence, winProbabilitySequence);
     }
 
     private void writeRecord(long sequence, int tick, String category,

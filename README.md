@@ -1,13 +1,14 @@
 # Dota Replay Data Lab
 
-This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, rolling gold per minute (GPM), and hero position heat maps.
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), and hero position heat maps.
 
-The default `match-analysis-v2` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
+The default `match-analysis-v3` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
 - the complete final `CMsgDOTAMatch` document;
 - the complete `CDOTAMatchMetadataFile`, including per-player and team graphs and snapshots;
 - every Clarity combat-log entry in compact typed columns;
 - cumulative earned-gold changes from `CDOTA_DataRadiant` and `CDOTA_DataDire`, timed by the game-rules clock;
+- the server's Radiant win-probability history, with spectator updates as a fallback source;
 - living main-hero positions at pause-safe 100 ms intervals.
 
 The profile excludes packet transport, rendering, sound, voice, and generic entity history. These streams are large and have no defined use case here. The cached replay remains the source for a future extraction profile.
@@ -102,7 +103,7 @@ pnpm release:check && sudo docker compose build parser e2e && sudo docker compos
 
 Docker is the supported way to run the complete application. Host development needs Node.js 22 and pnpm 10. It also needs explicit host paths for replays, staging data, the warehouse, migrations, and saved queries.
 
-The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state for that match. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is a reference report from the current extraction format.
+The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_WIN_PROBABILITY=1` to require the Valve-graph ready state, and set `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state. [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is the last recorded reference report; its environment section identifies the measured extraction format.
 
 ## Architecture and ownership
 
@@ -128,6 +129,7 @@ The profile applies Clarity runner filters before generic message/entity handlin
 | `CDOTAMatchMetadataFile` | complete JSON plus typed `analysis.team_time_series` | graphs, inventory/ability snapshots, wards, support statistics, and other future analyses |
 | `CMsgDOTACombatLogEntry` | typed `raw.combat_events` rows | every semantic field exposed by Clarity's combat-log API: combat, economy, levels, runes, wards, modifiers, visibility, abilities, objectives, and locations |
 | `CDOTA_DataRadiant` + `CDOTA_DataDire` + `CDOTAGamerulesProxy` | targeted entity/property staging plus typed `analysis.player_gold_events` | pause-safe cumulative earned-gold changes used for rolling player and team GPM |
+| `CDOTASpectatorGraphManagerProxy` + `CDOTA_DataSpectator` | compact `analysis.win_probability_samples` | the server's Radiant win-probability history; the application derives Dire as the complement and does not estimate either series |
 | `CDOTA_Unit_Hero_*` | compact staging rows plus typed `analysis.hero_position_samples` | pause-safe 100 ms world positions for living main heroes; illusions and temporary copies are excluded |
 
 The two complete documents stay in `raw.records`. BLOB fields stay in `raw.record_blobs`. Common filters, joins, and totals use normalized fields, so they do not parse the large documents. Combat events use typed columns and an extraction/time/type index. Hero samples keep world coordinates in DuckDB and convert them to a fixed display grid only when a heat map is requested. Internal Clarity string-table indices are not stored. The resolved names contain the useful Dota information.
@@ -182,6 +184,11 @@ SELECT *
 FROM analysis.match_rolling_gpm(8955653541, 60, 1)
 ORDER BY series_kind, team_id, player_slot NULLS FIRST, game_time_seconds;
 
+-- Valve's server-side win-probability samples for the latest extraction.
+SELECT game_time_seconds, radiant_probability, source
+FROM analysis.match_win_probability(8955653541)
+ORDER BY game_time_seconds;
+
 -- A 64 by 64 hero-position grid from 10:00.0 through 20:00.0.
 SELECT *
 FROM analysis.match_hero_heatmap(8955653541, 600000, 1200000, NULL, 64)
@@ -194,7 +201,9 @@ Run these queries with `./dota sql`. The browser editor accepts one bounded, rea
 
 ## Website
 
-`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, rolling GPM, and a hero position heat map. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Its exact values can be inspected with pointer input or the keyboard. Older extractions retain a clear unavailable state instead of using sparse combat locations or another approximation.
+`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, Valve win probability, rolling GPM, and a hero position heat map. The probability chart uses the server values in the replay. It does not estimate values from net worth, kills, or other match data. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Exact probability and GPM values can be inspected with pointer input or the keyboard.
+
+Schema-version-1 and schema-version-2 extractions have no win-probability staging file. The match page shows an unavailable state for them. Re-extract a cached or archived replay with the current parser to add the server series; the application does not construct a replacement series when the replay is unavailable.
 
 `/heroes` summarizes every hero picked or validly banned in matches that have both a normalized match row and a latest successful extraction. Picks and bans are distinct match counts; their rates use the number of matches in that fixed scope. Wins and losses use only picks with a known winner, while average GPM and XPM use the available player values. Missing averages and undecided win/loss rates remain `Unknown`. Existing stored match documents backfill the normalized draft table during migration, so ban statistics do not require replay re-extraction.
 

@@ -48,3 +48,16 @@ Limits use these environment variables:
 The exporter publishes an extraction only after it closes and hashes all
 files and the manifest. A failed partial extraction gets a `.failed-*` suffix.
 It has no `manifest.json`, so the loader cannot import it.
+
+The schema-version-3 manifest adds `win_probability.ndjson`. Each row contains
+the extraction ID, a zero-based sample index, pause-safe game time, Radiant
+probability from `0.0` through `1.0`, and the selected replay source. The
+exporter prefers `CDOTASpectatorGraphManagerProxy` graph history and uses
+`CDOTA_DataSpectator.m_fRadiantWinProbability` updates only when graph history
+is not available. It does not calculate a prediction.
+
+The graph stores integer percentages in 64 positions. The exporter divides
+each value by 100. It calculates the graph duration from the graph start and
+end fields, aligns the last graph position with the final match duration, and
+removes negative pre-game positions. An all-zero graph is unused data. Current
+spectator updates already use the normalized `0.0` through `1.0` scale.

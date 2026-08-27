@@ -65,10 +65,12 @@ export async function loadValidatedExtraction(validated: ValidatedExtraction): P
         const summaryStarted = performance.now();
         await materializeMatchAnalysis(database.connection, manifest);
         const heroPositions = await importHeroPositions(database.connection, extractionDir, manifest);
+        const winProbability = await importWinProbability(database.connection, extractionDir, manifest);
         const storedCounts = {
           ...rawCounts,
           heroPositions,
-          total: rawCounts.total + heroPositions,
+          winProbability,
+          total: rawCounts.total + heroPositions + winProbability,
         };
         const importElapsed = Math.max(0, Math.round(performance.now() - loadStarted));
         logPhase(manifest.extractionId, "duckdb_write", importElapsed, storedCounts.total);
@@ -121,7 +123,8 @@ async function analysisRowCount(connection: DuckDBConnection, extractionId: stri
        + (SELECT count(*) FROM analysis.team_time_series WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.hero_draft_events WHERE extraction_id = $id)
-       + (SELECT count(*) FROM analysis.hero_position_samples WHERE extraction_id = $id) AS rows`,
+       + (SELECT count(*) FROM analysis.hero_position_samples WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.win_probability_samples WHERE extraction_id = $id) AS rows`,
     { id: extractionId },
   );
   return Number((result.getRowObjects()[0] as { rows: bigint }).rows);
@@ -618,6 +621,83 @@ async function importHeroPositions(
   const count = (stored.getRowObjects()[0] as { count: bigint }).count;
   if (count !== BigInt(entry.records)) {
     throw new Error("Imported hero position count does not match the manifest");
+  }
+  return Number(count);
+}
+
+async function importWinProbability(
+  connection: DuckDBConnection,
+  dir: string,
+  manifest: Manifest,
+): Promise<number> {
+  const entry = manifest.files.winProbability;
+  if (manifest.schemaVersion < 3 || entry === undefined || entry.records === 0) return 0;
+
+  const source = sqlLiteral(path.join(dir, stagedFiles.winProbability));
+  await connection.run(`
+    CREATE OR REPLACE TEMP TABLE staged_win_probability AS
+    SELECT
+      json AS source_row,
+      json_extract_string(json, '$.extractionId') AS extraction_id,
+      try_cast(json_extract_string(json, '$.sampleIndex') AS UINTEGER) AS sample_index,
+      try_cast(json_extract_string(json, '$.gameTimeSeconds') AS DOUBLE) AS game_time_seconds,
+      try_cast(json_extract_string(json, '$.radiantProbability') AS DOUBLE) AS radiant_probability,
+      json_extract_string(json, '$.source') AS source
+    FROM read_json_objects('${source}', format = 'newline_delimited')
+  `);
+
+  const invalidResult = await connection.runAndReadAll(`
+    SELECT count(*) AS count
+    FROM staged_win_probability
+    WHERE json_type(source_row) IS DISTINCT FROM 'OBJECT'
+       OR json_type(source_row, '$.extractionId') IS DISTINCT FROM 'VARCHAR'
+       OR extraction_id IS DISTINCT FROM $id
+       OR json_type(source_row, '$.sampleIndex') NOT IN ('BIGINT', 'UBIGINT')
+       OR sample_index IS NULL
+       OR json_type(source_row, '$.gameTimeSeconds') NOT IN ('BIGINT', 'UBIGINT', 'DOUBLE')
+       OR game_time_seconds IS NULL
+       OR NOT isfinite(game_time_seconds)
+       OR game_time_seconds < 0
+       OR json_type(source_row, '$.radiantProbability') NOT IN ('BIGINT', 'UBIGINT', 'DOUBLE')
+       OR radiant_probability IS NULL
+       OR NOT isfinite(radiant_probability)
+       OR radiant_probability < 0.0
+       OR radiant_probability > 1.0
+       OR json_type(source_row, '$.source') IS DISTINCT FROM 'VARCHAR'
+       OR source IS NULL
+       OR source NOT IN ('graph_history', 'spectator_updates')
+  `, { id: manifest.extractionId });
+  if ((invalidResult.getRowObjects()[0] as { count: bigint }).count !== 0n) {
+    throw new Error("Win probability rows contain an invalid field");
+  }
+
+  const sourceResult = await connection.runAndReadAll(
+    "SELECT count(DISTINCT source) AS count FROM staged_win_probability",
+  );
+  if ((sourceResult.getRowObjects()[0] as { count: bigint }).count !== 1n) {
+    throw new Error("Win probability rows contain more than one source");
+  }
+
+  try {
+    await connection.run(`
+      INSERT INTO analysis.win_probability_samples
+      SELECT extraction_id, sample_index, game_time_seconds, radiant_probability, source
+      FROM staged_win_probability
+    `);
+  } catch (error) {
+    throw new Error(
+      `Failed importing winProbability: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+
+  const stored = await connection.runAndReadAll(
+    "SELECT count(*) AS count FROM analysis.win_probability_samples WHERE extraction_id = $id",
+    { id: manifest.extractionId },
+  );
+  const count = (stored.getRowObjects()[0] as { count: bigint }).count;
+  if (count !== BigInt(entry.records)) {
+    throw new Error("Imported win probability count does not match the manifest");
   }
   return Number(count);
 }

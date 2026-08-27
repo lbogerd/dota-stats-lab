@@ -29,7 +29,8 @@ record ExportConfig(long maxInputBytes, long maxOutputBytes, long maxRecords,
                 "CNETMsg_Tick"));
         result.put("entityClassPatterns", java.util.List.of(
                 "CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy",
-                "CDOTA_PlayerResource", "CDOTA_Unit_Hero_.*"));
+                "CDOTA_PlayerResource", "CDOTA_Unit_Hero_.*", "CDOTA_DataSpectator",
+                "CDOTASpectatorGraphManagerProxy"));
         return result;
     }
 

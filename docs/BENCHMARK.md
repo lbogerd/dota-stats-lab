@@ -24,10 +24,11 @@ ingestions. The warm-up is not measured. Every ingestion gets a new staging
 tree and a new DuckDB file. Download time is not measured. Disposable web
 containers serve the final normal- and near-hour-match warehouses on loopback.
 For each, the benchmark sends one warm overview request and 30 measured
-overview requests, and measures mobile browser rendering through the granular
-GPM ready state. It also runs one browser acknowledgement probe against the
-match selected by `BENCHMARK_HTTP_MATCH_ID`. Benchmark containers do not join or
-change the deployed Compose application.
+overview requests, and measures mobile browser rendering through the Valve
+win-probability graph or its unavailable state. It also runs one browser
+acknowledgement probe against the match selected by
+`BENCHMARK_HTTP_MATCH_ID`. Benchmark containers do not join or change the
+deployed Compose application.
 
 Each ingestion also measures the 100 ms hero-position data. The benchmark
 records the exported and stored position row counts, the position-file bytes,
@@ -35,6 +36,10 @@ the total parser output bytes, and the DuckDB warehouse bytes. It queries a
 64 by 64 all-hero heat map for a range at the center of the match. The initial
 range is five minutes. It records the first query, the median of five later
 queries, one server response, and the response size.
+
+The benchmark also records the exported and stored win-probability sample
+counts and the size of `win_probability.ndjson`. The exported and stored counts
+must be equal for a schema-version-3 extraction.
 
 Results are written beneath `benchmark-results/TIMESTAMP/` as raw JSONL,
 environment JSON, a combined `results.json`, and a rendered `BENCHMARK.md`.
@@ -77,7 +82,10 @@ near-hour warehouses always supply overview and browser-render probes when HTTP
 measurement is enabled. `BENCHMARK_GPM_WINDOW_SECONDS` selects one of the six
 supported rolling windows and defaults to 60. `BENCHMARK_GPM_WARM_SAMPLES`
 defaults to five query calls, and `BENCHMARK_BROWSER_RENDER_SAMPLES` defaults
-to three fresh mobile navigations. `BENCHMARK_GPM_MAX_ROUNDING_DIFFERENCE`
+to three fresh mobile navigations. Set
+`BENCHMARK_REQUIRE_WIN_PROBABILITY=1` when the selected extraction must show
+the graph ready state instead of allowing the unavailable state.
+`BENCHMARK_GPM_MAX_ROUNDING_DIFFERENCE`
 defaults to 1 GPM and is the acceptance tolerance for the final cumulative-gold
 comparison. `BENCHMARK_HEATMAP_RANGE_SECONDS` sets the length of the range at
 the center of the match and defaults to 300. A shorter match uses its full
@@ -113,6 +121,9 @@ uses Docker directly when the current user can access it and otherwise uses
   `analysis.hero_position_samples` count. A new extraction must store position
   rows and must give equal cell and selected-sample totals for the measured
   range.
+- Win-probability row counts show both the parser manifest count and the
+  retained `analysis.win_probability_samples` count. The two counts must be
+  equal for a schema-version-3 extraction.
 - Cold heat-map latency is the first 64 by 64 macro query on a new read-only
   DuckDB connection. Warm heat-map latency is the median of five later queries
   on that connection. The query uses all heroes and times with 100 ms
@@ -123,6 +134,9 @@ uses Docker directly when the current user can access it and otherwise uses
 - A schema-version-1 extraction has no position data. The benchmark reports
   the position measurements as unavailable and continues with the other
   measurements and all GPM acceptance checks.
+- Schema-version-1 and schema-version-2 extractions have no win-probability
+  data. The benchmark reports these measurements as unavailable unless
+  `BENCHMARK_REQUIRE_WIN_PROBABILITY=1` is set.
 - Cold rolling GPM latency is the first materialized macro query on a new
   read-only DuckDB connection. Warm latency is the median of five later queries
   on that connection.
@@ -140,9 +154,9 @@ uses Docker directly when the current user can access it and otherwise uses
 - Overview latency is one unmeasured warm request followed by 30 sequential
   loopback requests. The report uses the nearest-rank p95.
 - Browser render latency starts immediately before a fresh 390 by 844 browser
-  navigation and stops when either the granular GPM graph or its explicit
-  unavailable state is visible. Three samples are collected for the normal and
-  near-hour fixtures, and the report uses nearest-rank p95.
+  navigation and stops when either the Valve win-probability graph or its
+  explicit unavailable state is visible. Three samples are collected for the
+  normal and near-hour fixtures, and the report uses nearest-rank p95.
 - Acknowledgement latency starts when the browser activates the ingestion
   button and stops when the queued or active job is visibly confirmed.
 

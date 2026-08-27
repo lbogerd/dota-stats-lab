@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class Main {
+    static final int MANIFEST_SCHEMA_VERSION = 3;
     static final ParserIdentity PARSER_IDENTITY = ParserIdentity.load();
     private static final BigInteger UINT64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
     private static final ObjectMapper JSON = new ObjectMapper()
@@ -103,7 +104,7 @@ public final class Main {
 
             Instant completed = Instant.now();
             Map<String, Object> manifest = new LinkedHashMap<>();
-            manifest.put("schemaVersion", 2);
+            manifest.put("schemaVersion", MANIFEST_SCHEMA_VERSION);
             manifest.put("extractionId", extractionId);
             manifest.put("matchId", args.matchId());
             manifest.put("replaySha256", actualSha);

@@ -22,6 +22,7 @@ final class NdjsonSet implements Closeable {
             "entityEvents", "entity_events.ndjson",
             "propertyUpdates", "property_updates.ndjson",
             "heroPositions", "hero_positions.ndjson",
+            "winProbability", "win_probability.ndjson",
             "checkpoints", "checkpoints.ndjson");
 
     private final ObjectMapper mapper;

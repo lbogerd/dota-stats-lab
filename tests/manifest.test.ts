@@ -63,6 +63,23 @@ test("validateManifest accepts schema version 2 with hero positions", async () =
   assert.equal(result.files.heroPositions?.records, 1);
 });
 
+test("validateManifest accepts schema version 3 with win probability", async () => {
+  const { dir, manifest } = await fixture();
+  manifest.schemaVersion = 3;
+  await setStagedFile(
+    dir,
+    manifest,
+    "winProbability",
+    `${JSON.stringify({ sampleIndex: 0, radiantProbability: 0.5 })}\n`,
+    1,
+  );
+
+  const result = await validateManifest(dir, 42n);
+  assert.equal(result.schemaVersion, 3);
+  assert.equal(result.files.heroPositions?.records, 0);
+  assert.equal(result.files.winProbability?.records, 1);
+});
+
 test("validateManifest recovers a schema version 1 manifest without hero positions", async () => {
   const { dir, manifest } = await fixture();
   delete (manifest.files as Record<string, unknown>).heroPositions;
@@ -71,6 +88,18 @@ test("validateManifest recovers a schema version 1 manifest without hero positio
   const result = await validateManifest(dir, 42n);
   assert.equal(result.schemaVersion, 1);
   assert.equal(result.files.heroPositions, undefined);
+  assert.equal(result.files.winProbability, undefined);
+});
+
+test("validateManifest recovers a schema version 2 manifest without win probability", async () => {
+  const { dir, manifest } = await fixture();
+  manifest.schemaVersion = 2;
+  delete (manifest.files as Record<string, unknown>).winProbability;
+  await writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+
+  const result = await validateManifest(dir, 42n);
+  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.files.winProbability, undefined);
 });
 
 test("validateManifest accepts checksums, bytes, and records from one staged file", async () => {
@@ -134,6 +163,22 @@ test("validateManifest checks the hero position checksum, size, and row count", 
 
   await setStagedFile(dir, manifest, "heroPositions", "one\ntwo\n", 1);
   await assert.rejects(validateManifest(dir, 42n), /Record count mismatch for hero_positions\.ndjson/);
+});
+
+test("validateManifest checks the win probability checksum, size, and row count", async () => {
+  const { dir, manifest } = await fixture();
+  manifest.schemaVersion = 3;
+  await setStagedFile(dir, manifest, "winProbability", "one\ntwo\n", 2);
+  await writeFile(path.join(dir, stagedFiles.winProbability), "one\nxxxx\n");
+  await assert.rejects(validateManifest(dir, 42n), /Size mismatch for win_probability\.ndjson/);
+
+  await setStagedFile(dir, manifest, "winProbability", "one\ntwo\n", 2);
+  (manifest.files as Record<string, Record<string, unknown>>).winProbability!.sha256 = "d".repeat(64);
+  await writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+  await assert.rejects(validateManifest(dir, 42n), /Checksum mismatch for win_probability\.ndjson/);
+
+  await setStagedFile(dir, manifest, "winProbability", "one\ntwo\n", 1);
+  await assert.rejects(validateManifest(dir, 42n), /Record count mismatch for win_probability\.ndjson/);
 });
 
 test("validateManifest rejects a non-empty file without a final newline", async () => {

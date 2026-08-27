@@ -56,6 +56,24 @@ for (const [label, runs] of groups) {
 
 lines.push(
   "",
+  "## Win-probability measurements",
+  "",
+  "| Replay | Match | Samples | Stored | Probability output | Total output |",
+  "|---|---:|---:|---:|---:|---:|",
+);
+
+for (const [label, runs] of groups) {
+  const first = runs[0];
+  const probabilityOutputBytes = medianOptional(runs, "probabilityOutputBytes");
+  const totalOutputBytes = medianOptional(runs, "outputBytes");
+  const outputWithShare = probabilityOutputBytes == null
+    ? "not measured"
+    : `${formatMiB(probabilityOutputBytes)}${totalOutputBytes > 0 ? ` (${formatPercent(probabilityOutputBytes / totalOutputBytes)})` : ""}`;
+  lines.push(`| ${label} | ${first.matchId} | ${formatOptionalInteger(medianOptional(runs, "probabilityExportedRows"))} | ${formatOptionalInteger(medianOptional(runs, "probabilityStoredRows"))} | ${outputWithShare} | ${formatOptionalBytes(totalOutputBytes)} |`);
+}
+
+lines.push(
+  "",
   "## Granular GPM measurements",
   "",
   "| Replay | Match | Gold events | Warehouse | Cold GPM | Warm GPM | 1s response | Max final GPM diff | Browser render p95 |",
@@ -86,11 +104,12 @@ lines.push(
   "- Cold heat-map latency is the first macro query on a new read-only DuckDB connection. Warm heat-map latency is the median of repeated materialized queries on that connection.",
   "- The heat-map API measurement includes its read-only connection, availability query, macro query, and response assembly. Response size is UTF-8 JSON bytes.",
   "- A schema-version-1 extraction has no position file. The benchmark reports its position metrics as unavailable and continues to run the existing GPM validations.",
+  "- Win-probability output is the exact byte size of `win_probability.ndjson`. Exported and stored sample counts must be equal for a schema-version-3 extraction.",
   "- Cold GPM is the first rolling-macro query on a new read-only DuckDB connection. Warm GPM is the median of repeated materialized queries on that same connection.",
   `- The GPM response size is the UTF-8 JSON byte length of the grouped ${gpmWindowSeconds}-second-window response at a one-second output step.`,
   "- The real-replay validation requires ten non-empty player series, two non-empty complete-team series, and five players per team when the match is at least as long as the selected window.",
   "- Final GPM validation subtracts each player's last value at or before game time zero from the last stored cumulative earned-gold value, normalizes it per minute over match duration, and compares that result with the final scoreboard GPM.",
-  "- Browser render time measures a fresh 390 by 844 navigation until the granular GPM graph or explicit unavailable state is visible. It is collected for the normal and near-hour fixtures.",
+  "- Browser render time measures a fresh 390 by 844 navigation until the Valve win-probability graph or explicit unavailable state is visible. It is collected for the normal and near-hour fixtures.",
   "- Acknowledgement is one browser measurement from activating the ingestion button until the queued or active job is visible. It mutates only the disposable benchmark job directory.",
   "- Container CPU and memory limits are part of the benchmark configuration recorded in the JSON report.",
   "",

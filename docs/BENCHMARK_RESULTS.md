@@ -1,5 +1,9 @@
 # Dota replay ingestion benchmark
 
+This report is a historical reference for export format 2.0.0. The current
+export format is 2.1.0. Run `./scripts/benchmark.sh` to measure the current
+format. Do not compare the old row counts or file sizes with a 2.1.0 extraction.
+
 Generated: 2026-08-26T11:41:01Z
 
 ## Environment

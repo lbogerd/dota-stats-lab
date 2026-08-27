@@ -326,6 +326,152 @@ test("an invalid hero position rolls back the complete extraction", async () => 
   }
 });
 
+test("loader validates and stores win probability rows", async () => {
+  const probabilityExtractionId = "4".repeat(64);
+  const probabilityMatchId = 50n;
+  const rows = Object.fromEntries(Object.entries(goodRows).map(
+    ([name, body]) => [name, body.replaceAll(extractionId, probabilityExtractionId)],
+  )) as Record<string, string>;
+  const probabilityRow = (value: Record<string, unknown>): string => `${JSON.stringify({
+    extractionId: probabilityExtractionId,
+    ...value,
+  })}\n`;
+  rows["win_probability.ndjson"] = [
+    probabilityRow({ sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 0.5, source: "graph_history" }),
+    probabilityRow({ sampleIndex: 1, gameTimeSeconds: 12.5, radiantProbability: 0.625, source: "graph_history" }),
+  ].join("");
+
+  assert.equal((await loadClaimedExtraction(await stage(
+    probabilityExtractionId,
+    rows,
+    probabilityMatchId,
+    { schemaVersion: 3 },
+  ))).status, "loaded");
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(`
+      SELECT
+        (SELECT list({ sample_index: sample_index, game_time_seconds: game_time_seconds,
+                       radiant_probability: radiant_probability, source: source }
+                     ORDER BY sample_index)
+         FROM analysis.match_win_probability($matchId)) AS samples,
+        (SELECT record_counts::VARCHAR FROM catalog.extractions WHERE extraction_id = $id) AS counts
+    `, { matchId: probabilityMatchId, id: probabilityExtractionId });
+    const stored = result.getRowObjectsJson()[0] as { samples: unknown; counts: string };
+    assert.deepEqual(stored.samples, [
+      { sample_index: 0, game_time_seconds: 0, radiant_probability: 0.5, source: "graph_history" },
+      { sample_index: 1, game_time_seconds: 12.5, radiant_probability: 0.625, source: "graph_history" },
+    ]);
+    assert.equal(JSON.parse(stored.counts).winProbability, 2);
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+});
+
+test("loader accepts an empty schema-version-3 win probability file", async () => {
+  const emptyExtractionId = createHash("sha256").update("empty-win-probability").digest("hex");
+  const rows = Object.fromEntries(Object.entries(goodRows).map(
+    ([name, body]) => [name, body.replaceAll(extractionId, emptyExtractionId)],
+  )) as Record<string, string>;
+  rows["win_probability.ndjson"] = "";
+
+  assert.equal((await loadClaimedExtraction(await stage(
+    emptyExtractionId,
+    rows,
+    50_001n,
+    { schemaVersion: 3 },
+  ))).status, "loaded");
+
+  const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(`
+      SELECT
+        (SELECT count(*)::INTEGER FROM analysis.win_probability_samples
+         WHERE extraction_id = $id) AS samples,
+        (SELECT json_extract(record_counts, '$.winProbability')::INTEGER
+         FROM catalog.extractions WHERE extraction_id = $id) AS stored_count
+    `, { id: emptyExtractionId });
+    assert.deepEqual(result.getRowObjectsJson(), [{ samples: 0, stored_count: 0 }]);
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+});
+
+test("each invalid win probability field rolls back the complete extraction", async (context) => {
+  const cases: Array<{
+    name: string;
+    body: (id: string) => string;
+    error?: RegExp;
+  }> = [
+    { name: "row type", body: () => "[]\n" },
+    { name: "extraction ID type", body: () => `${JSON.stringify({ extractionId: 3, sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 0.5, source: "graph_history" })}\n` },
+    { name: "extraction ID value", body: () => `${JSON.stringify({ extractionId: "f".repeat(64), sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 0.5, source: "graph_history" })}\n` },
+    { name: "sample index type", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: "0", gameTimeSeconds: 0, radiantProbability: 0.5, source: "graph_history" })}\n` },
+    { name: "sample index range", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: -1, gameTimeSeconds: 0, radiantProbability: 0.5, source: "graph_history" })}\n` },
+    { name: "game time type", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: 0, gameTimeSeconds: "0", radiantProbability: 0.5, source: "graph_history" })}\n` },
+    { name: "game time range", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: 0, gameTimeSeconds: -1, radiantProbability: 0.5, source: "graph_history" })}\n` },
+    { name: "probability type", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: "0.5", source: "graph_history" })}\n` },
+    { name: "probability range", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 1.01, source: "graph_history" })}\n` },
+    { name: "source type", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 0.5, source: 1 })}\n` },
+    { name: "source value", body: (id) => `${JSON.stringify({ extractionId: id, sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 0.5, source: "application_estimate" })}\n` },
+    {
+      name: "mixed sources",
+      body: (id) => [
+        { extractionId: id, sampleIndex: 0, gameTimeSeconds: 0, radiantProbability: 0.5, source: "graph_history" },
+        { extractionId: id, sampleIndex: 1, gameTimeSeconds: 1, radiantProbability: 0.6, source: "spectator_updates" },
+      ].map((value) => `${JSON.stringify(value)}\n`).join(""),
+      error: /more than one source/,
+    },
+    {
+      name: "duplicate time",
+      body: (id) => [
+        { extractionId: id, sampleIndex: 0, gameTimeSeconds: 1, radiantProbability: 0.5, source: "graph_history" },
+        { extractionId: id, sampleIndex: 1, gameTimeSeconds: 1, radiantProbability: 0.6, source: "graph_history" },
+      ].map((value) => `${JSON.stringify(value)}\n`).join(""),
+      error: /Failed importing winProbability/,
+    },
+  ];
+
+  for (const [index, invalid] of cases.entries()) {
+    await context.test(invalid.name, async () => {
+      const invalidExtractionId = createHash("sha256")
+        .update(`invalid-win-probability-${index}`)
+        .digest("hex");
+      const invalidMatchId = 51n + BigInt(index);
+      const rows = Object.fromEntries(Object.entries(goodRows).map(
+        ([name, body]) => [name, body.replaceAll(extractionId, invalidExtractionId)],
+      )) as Record<string, string>;
+      rows["win_probability.ndjson"] = invalid.body(invalidExtractionId);
+
+      await assert.rejects(loadClaimedExtraction(await stage(
+        invalidExtractionId,
+        rows,
+        invalidMatchId,
+        { schemaVersion: 3 },
+      )), invalid.error ?? /Win probability rows contain an invalid field/);
+
+      const instance = await DuckDBInstance.create(process.env.WAREHOUSE_PATH!);
+      const connection = await instance.connect();
+      try {
+        const result = await connection.runAndReadAll(`
+          SELECT
+            (SELECT count(*)::INTEGER FROM raw.records WHERE extraction_id = $id) AS raw_rows,
+            (SELECT count(*)::INTEGER FROM analysis.win_probability_samples WHERE extraction_id = $id) AS samples
+        `, { id: invalidExtractionId });
+        assert.deepEqual(result.getRowObjectsJson(), [{ raw_rows: 0, samples: 0 }]);
+      } finally {
+        connection.closeSync();
+        instance.closeSync();
+      }
+    });
+  }
+});
+
 test("loader stores only retained rows and catalogs stored counts", async () => {
   const filteredId = "e".repeat(64);
   const filteredMatchId = 44n;
@@ -404,7 +550,7 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
     assert.equal(stored.exported_records, "3");
     assert.deepEqual(JSON.parse(stored.record_counts as string), {
       records: 2, combatEvents: 0, blobs: 3, entityInstances: 2, entityEvents: 3,
-      propertyUpdates: 2, checkpoints: 3, heroPositions: 0, total: 15,
+      propertyUpdates: 2, checkpoints: 3, heroPositions: 0, winProbability: 0, total: 15,
     });
   } finally { connection.closeSync(); }
 });
@@ -584,7 +730,7 @@ async function stage(
     parser?: { name: string; version: string; upstreamRelease?: string; forkRevision?: string };
     exporterVersion?: string;
     acquisition?: Record<string, unknown>;
-    schemaVersion?: 1 | 2;
+    schemaVersion?: 1 | 2 | 3;
   } = {},
 ): Promise<{
   matchId: bigint;
@@ -600,6 +746,7 @@ async function stage(
     records: "records.ndjson", combatEvents: "combat_events.ndjson", blobs: "blobs.ndjson", entityInstances: "entity_instances.ndjson",
     entityEvents: "entity_events.ndjson", propertyUpdates: "property_updates.ndjson", checkpoints: "checkpoints.ndjson",
     heroPositions: "hero_positions.ndjson",
+    winProbability: "win_probability.ndjson",
   };
   for (const [key, name] of Object.entries(logical)) {
     const body = rows[name] ?? "";

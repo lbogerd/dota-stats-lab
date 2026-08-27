@@ -6,6 +6,7 @@ import type { MatchOverviewPlayer, MatchOverviewTeamTotals } from "../server/ove
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
 import { GpmSection } from "../web/gpm-section";
 import { HeroHeatmapSection } from "../web/hero-heatmap-section";
+import { WinProbabilitySection } from "../web/win-probability-section";
 import {
   displayValue,
   formatInteger,
@@ -116,6 +117,12 @@ function MatchDetail() {
       dire={match.netWorthAnalysis.direNetWorth}
       advantage={match.netWorthAnalysis.advantage}
       leader={match.netWorthAnalysis.leader}
+    />
+
+    <WinProbabilitySection
+      matchId={matchId}
+      radiantName={teamName(2, summary.radiantTeamName)}
+      direName={teamName(3, summary.direTeamName)}
     />
 
     <GpmSection

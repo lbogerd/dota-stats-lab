@@ -12,14 +12,16 @@ export const stagedFiles = {
   propertyUpdates: "property_updates.ndjson",
   checkpoints: "checkpoints.ndjson",
   heroPositions: "hero_positions.ndjson",
+  winProbability: "win_probability.ndjson",
 } as const;
 
 type FileEntry = { path: string; sha256: string; bytes: number; records: number };
 type StagedFile = keyof typeof stagedFiles;
-type LegacyStagedFile = Exclude<StagedFile, "heroPositions">;
-type ManifestFiles = Record<LegacyStagedFile, FileEntry> & Partial<Record<"heroPositions", FileEntry>>;
+type LegacyStagedFile = Exclude<StagedFile, "heroPositions" | "winProbability">;
+type ManifestFiles = Record<LegacyStagedFile, FileEntry>
+  & Partial<Record<"heroPositions" | "winProbability", FileEntry>>;
 export type Manifest = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   extractionId: string;
   matchId: string;
   replaySha256: string;
@@ -46,9 +48,10 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
   const raw = await readFile(path.join(extractionDir, "manifest.json"), "utf8");
   const value: unknown = JSON.parse(raw);
   if (!isObject(value)) throw new Error("Manifest must be a JSON object");
-  if (value.schemaVersion !== 1 && value.schemaVersion !== 2) {
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3) {
     throw new Error("Unsupported manifest schemaVersion");
   }
+  const schemaVersion = value.schemaVersion;
   const extractionId = stringField(value, "extractionId");
   if (!/^[a-f0-9]{64}$/.test(extractionId)) throw new Error("Invalid extractionId");
   if (stringField(value, "matchId") !== expectedMatchId.toString()) throw new Error("Manifest matchId mismatch");
@@ -69,9 +72,10 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
 
   let totalBytes = 0;
   let totalRecords = 0;
-  const requiredFiles = value.schemaVersion === 1
-    ? Object.entries(stagedFiles).filter(([logical]) => logical !== "heroPositions")
-    : Object.entries(stagedFiles);
+  const requiredFiles = Object.entries(stagedFiles).filter(([logical]) => (
+    logical !== "heroPositions" && logical !== "winProbability"
+  ) || (logical === "heroPositions" && schemaVersion >= 2)
+    || (logical === "winProbability" && schemaVersion >= 3));
   for (const [logical, expectedName] of requiredFiles) {
     const entry = value.files[logical];
     if (!isObject(entry) || stringField(entry, "path") !== expectedName) throw new Error(`Invalid manifest file entry: ${logical}`);
@@ -88,6 +92,7 @@ export async function readManifest(extractionDir: string, expectedMatchId: bigin
   if (totalBytes > maxOutputBytes) throw new Error("Staged files exceed manifest output limit");
   if (totalRecords > maxRecords) throw new Error("Staged files exceed manifest record limit");
   if (value.schemaVersion === 1) delete value.files.heroPositions;
+  if (value.schemaVersion < 3) delete value.files.winProbability;
   return value as unknown as Manifest;
 }
 
@@ -110,7 +115,8 @@ export async function validateManifest(extractionDir: string, expectedMatchId: b
 
 export function manifestFileEntries(manifest: Manifest): Array<[StagedFile, string]> {
   return Object.entries(stagedFiles).filter(
-    ([logical]) => logical !== "heroPositions" || manifest.schemaVersion === 2,
+    ([logical]) => (logical !== "heroPositions" || manifest.schemaVersion >= 2)
+      && (logical !== "winProbability" || manifest.schemaVersion >= 3),
   ) as Array<[StagedFile, string]>;
 }
 

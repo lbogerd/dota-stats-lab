@@ -22,12 +22,14 @@ HEATMAP_WARM_SAMPLES=${BENCHMARK_HEATMAP_WARM_SAMPLES:-5}
 BROWSER_RENDER_SAMPLES=${BENCHMARK_BROWSER_RENDER_SAMPLES:-3}
 ONLY_REPLAY=${BENCHMARK_ONLY:-all}
 RUN_HTTP=${BENCHMARK_HTTP:-1}
+REQUIRE_WIN_PROBABILITY=${BENCHMARK_REQUIRE_WIN_PROBABILITY:-0}
 BUILD_IMAGES=${BENCHMARK_BUILD:-1}
 KEEP_SCRATCH=${BENCHMARK_KEEP_SCRATCH:-0}
 OUTPUT_DIR=${BENCHMARK_OUTPUT_DIR:-$PROJECT_ROOT/benchmark-results/$(date -u +%Y%m%dT%H%M%SZ)}
 
 [[ "$MEASURED_RUNS" =~ ^[1-9][0-9]*$ ]] || { echo "BENCHMARK_RUNS must be positive" >&2; exit 2; }
 [[ "$RUN_HTTP" == 0 || "$RUN_HTTP" == 1 ]] || { echo "BENCHMARK_HTTP must be 0 or 1" >&2; exit 2; }
+[[ "$REQUIRE_WIN_PROBABILITY" == 0 || "$REQUIRE_WIN_PROBABILITY" == 1 ]] || { echo "BENCHMARK_REQUIRE_WIN_PROBABILITY must be 0 or 1" >&2; exit 2; }
 [[ "$BUILD_IMAGES" == 0 || "$BUILD_IMAGES" == 1 ]] || { echo "BENCHMARK_BUILD must be 0 or 1" >&2; exit 2; }
 [[ "$ONLY_REPLAY" =~ ^(all|short|normal|large)$ ]] || { echo "BENCHMARK_ONLY must be all, short, normal, or large" >&2; exit 2; }
 [[ "$GPM_WINDOW_SECONDS" =~ ^(1|5|10|30|60|300)$ ]] || { echo "BENCHMARK_GPM_WINDOW_SECONDS must be 1, 5, 10, 30, 60, or 300" >&2; exit 2; }
@@ -179,6 +181,7 @@ run_http_probe() {
     --mount "type=bind,src=$PROJECT_ROOT/scripts/verify-overview.mjs,dst=/work/verify-overview.mjs,readonly" \
     -e BENCHMARK_BASE_URL="http://127.0.0.1:$port" -e BENCHMARK_MATCH_ID="$match_id" \
     -e BENCHMARK_OVERVIEW_SAMPLES=30 -e BENCHMARK_BROWSER_RENDER_SAMPLES="$BROWSER_RENDER_SAMPLES" \
+    -e BENCHMARK_REQUIRE_WIN_PROBABILITY="$REQUIRE_WIN_PROBABILITY" \
     -e BENCHMARK_ACKNOWLEDGEMENT="$acknowledgement" "$E2E_IMAGE" node /work/verify-overview.mjs)
   "${DOCKER[@]}" rm --force "$name" >/dev/null
   active_containers=("${active_containers[@]/$name}")
@@ -216,7 +219,7 @@ run_ingestion() {
   local label=$1 match_id=$2 kind=$3 run_number=$4
   local scratch replay_path replay_bytes manifest_file manifest_copy parser_wall loader_wall
   local parser_peak loader_peak peak complete metrics metrics_output warehouse_bytes gpm_json positions_json http_json=null acknowledgement=0
-  local position_exported_rows position_stored_rows
+  local position_exported_rows position_stored_rows probability_exported_rows probability_stored_rows
   scratch="$WORK_ROOT/run-${label}-${kind}-${run_number}-$RANDOM"
   mkdir -p "$scratch/staging/inbox" "$scratch/staging/claimed" "$scratch/staging/jobs" "$scratch/warehouse" "$scratch/queries"
   chmod 0777 "$scratch/staging/inbox" "$scratch/staging/claimed" "$scratch/staging/jobs" "$scratch/warehouse" "$scratch/queries"
@@ -248,7 +251,7 @@ run_ingestion() {
   (( parser_peak > loader_peak )) && peak=$parser_peak || peak=$loader_peak
   complete=$(( parser_wall + loader_wall ))
 
-  metrics_output=$(printf '%s\n' "SELECT e.extraction_id, e.preparation_elapsed_ms::VARCHAR AS preparation_ms, e.parse_elapsed_ms::VARCHAR AS parsing_ms, e.load_elapsed_ms::VARCHAR AS load_ms, e.summary_elapsed_ms::VARCHAR AS summary_ms, e.output_size_bytes::VARCHAR AS output_bytes, coalesce(json_extract_string(e.record_counts, '$.total'), '0') AS retained_rows, (SELECT count(*)::VARCHAR FROM analysis.player_gold_events AS gold WHERE gold.extraction_id = e.extraction_id) AS gold_event_rows, (SELECT count(*)::VARCHAR FROM analysis.hero_position_samples AS position WHERE position.extraction_id = e.extraction_id) AS position_rows, m.duration_seconds::VARCHAR AS duration_seconds FROM catalog.extractions e LEFT JOIN analysis.matches m USING (extraction_id) WHERE e.match_id = $match_id ORDER BY e.completed_at DESC LIMIT 1;" | \
+  metrics_output=$(printf '%s\n' "SELECT e.extraction_id, e.preparation_elapsed_ms::VARCHAR AS preparation_ms, e.parse_elapsed_ms::VARCHAR AS parsing_ms, e.load_elapsed_ms::VARCHAR AS load_ms, e.summary_elapsed_ms::VARCHAR AS summary_ms, e.output_size_bytes::VARCHAR AS output_bytes, coalesce(json_extract_string(e.record_counts, '$.total'), '0') AS retained_rows, (SELECT count(*)::VARCHAR FROM analysis.player_gold_events AS gold WHERE gold.extraction_id = e.extraction_id) AS gold_event_rows, (SELECT count(*)::VARCHAR FROM analysis.hero_position_samples AS position WHERE position.extraction_id = e.extraction_id) AS position_rows, (SELECT count(*)::VARCHAR FROM analysis.win_probability_samples AS probability WHERE probability.extraction_id = e.extraction_id) AS probability_rows, m.duration_seconds::VARCHAR AS duration_seconds FROM catalog.extractions e LEFT JOIN analysis.matches m USING (extraction_id) WHERE e.match_id = $match_id ORDER BY e.completed_at DESC LIMIT 1;" | \
     "${DOCKER[@]}" run --rm --interactive --network none --read-only \
       --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
       --mount "type=bind,src=$scratch/warehouse,dst=/data/warehouse" \
@@ -259,6 +262,12 @@ run_ingestion() {
   position_stored_rows=$(jq -r '.position_rows | tonumber' <<<"$metrics")
   if [[ -n "$position_exported_rows" && "$position_exported_rows" != "$position_stored_rows" ]]; then
     echo "Position row mismatch: parser exported $position_exported_rows but loader stored $position_stored_rows" >&2
+    return 1
+  fi
+  probability_exported_rows=$(jq -r '.files.winProbability.records // empty' "$manifest_copy")
+  probability_stored_rows=$(jq -r '.probability_rows | tonumber' <<<"$metrics")
+  if [[ -n "$probability_exported_rows" && "$probability_exported_rows" != "$probability_stored_rows" ]]; then
+    echo "Win-probability row mismatch: parser exported $probability_exported_rows but loader stored $probability_stored_rows" >&2
     return 1
   fi
   warehouse_bytes=$(stat -c %s "$scratch/warehouse/dota.duckdb")
@@ -286,8 +295,11 @@ run_ingestion() {
       exportedRows:([$manifest.files[].records]|add),outputBytes:($metrics.output_bytes|tonumber),
       positionExportedRows:(($manifest.files.heroPositions.records // 0)|tonumber),
       positionOutputBytes:(($manifest.files.heroPositions.bytes // 0)|tonumber),
+      probabilityExportedRows:(($manifest.files.winProbability.records // 0)|tonumber),
+      probabilityOutputBytes:(($manifest.files.winProbability.bytes // 0)|tonumber),
       extractionId:$metrics.extraction_id,warehouseBytes:$warehouseBytes,
       goldEventRows:($metrics.gold_event_rows|tonumber),positionStoredRows:($metrics.position_rows|tonumber),
+      probabilityStoredRows:($metrics.probability_rows|tonumber),
       gpm:$gpm,positions:$positions,
       http:(if $http == null then null else $http end)}' >> "$RUNS_FILE"
   echo "$label $kind run $run_number complete: $complete ms" >&2
@@ -312,13 +324,15 @@ RESULTS_FILE="$OUTPUT_DIR/results.json"
 jq -n --arg generatedAt "$(date -u +%FT%TZ)" --slurpfile environment "$ENVIRONMENT_FILE" \
   --slurpfile runs "$RUNS_FILE" --arg replaySource "$REPLAY_SOURCE" --argjson measuredRuns "$MEASURED_RUNS" \
   --argjson httpEnabled "$RUN_HTTP" --argjson browserRenderSamples "$BROWSER_RENDER_SAMPLES" \
+  --argjson requireWinProbability "$REQUIRE_WIN_PROBABILITY" \
   --argjson gpmWindowSeconds "$GPM_WINDOW_SECONDS" --argjson gpmWarmSamples "$GPM_WARM_SAMPLES" \
   --argjson gpmMaxRoundingDifference "$GPM_MAX_ROUNDING_DIFFERENCE" \
   --argjson heatmapRangeSeconds "$HEATMAP_RANGE_SECONDS" --argjson heatmapWarmSamples "$HEATMAP_WARM_SAMPLES" \
-  '{schemaVersion:3,generatedAt:$generatedAt,environment:$environment[0],
+  '{schemaVersion:4,generatedAt:$generatedAt,environment:$environment[0],
     configuration:{replaySource:$replaySource,warmupRuns:1,measuredRuns:$measuredRuns,
       overviewSamples:(if $httpEnabled == 1 then 30 else 0 end),parserMemoryLimitBytes:4294967296,
       browserRenderSamples:(if $httpEnabled == 1 then $browserRenderSamples else 0 end),
+      requireWinProbability:($requireWinProbability == 1),
       gpmWindowSeconds:$gpmWindowSeconds,gpmOutputStepSeconds:1,gpmWarmSamples:$gpmWarmSamples,
       gpmMaxRoundingDifference:$gpmMaxRoundingDifference,
       heatmapRangeSeconds:$heatmapRangeSeconds,heatmapGridSize:64,heatmapWarmSamples:$heatmapWarmSamples,

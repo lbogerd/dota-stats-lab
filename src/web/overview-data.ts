@@ -2,14 +2,16 @@ import { queryOptions } from "@tanstack/react-query";
 import type { MatchRollingGpm, RollingGpmWindowSeconds } from "../server/gpm.js";
 import type { MatchListItem, MatchOverview } from "../server/overview.js";
 import type { MatchHeroHeatmap } from "../server/hero-positions.js";
+import type { MatchWinProbability } from "../server/win-probability.js";
 import {
   getMatchHeroHeatmapFn,
   getMatchOverviewFn,
   getMatchRollingGpmFn,
+  getMatchWinProbabilityFn,
   listMatchOverviewsFn,
 } from "./functions.js";
 
-export type { MatchHeroHeatmap, MatchListItem, MatchOverview, MatchRollingGpm };
+export type { MatchHeroHeatmap, MatchListItem, MatchOverview, MatchRollingGpm, MatchWinProbability };
 
 export const overviewQueryKeys = {
   matches: ["match-overviews"] as const,
@@ -22,6 +24,7 @@ export const overviewQueryKeys = {
     endMilliseconds: number,
     playerSlot: number | null,
   ) => ["match-hero-heatmap", matchId, startMilliseconds, endMilliseconds, playerSlot] as const,
+  winProbability: (matchId: string) => ["match-win-probability", matchId] as const,
 };
 
 export const matchOverviewsQuery = () => queryOptions({
@@ -60,6 +63,11 @@ export const matchHeroHeatmapQuery = (
   queryFn: (): Promise<MatchHeroHeatmap> => getMatchHeroHeatmapFn({
     data: { matchId, startMilliseconds, endMilliseconds, playerSlot },
   }),
+});
+
+export const matchWinProbabilityQuery = (matchId: string) => queryOptions({
+  queryKey: overviewQueryKeys.winProbability(matchId),
+  queryFn: (): Promise<MatchWinProbability> => getMatchWinProbabilityFn({ data: { matchId } }),
 });
 
 export function displayValue(value: string | number | null | undefined): string {
