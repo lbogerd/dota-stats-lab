@@ -6,6 +6,10 @@ import {
   damageBySourceInputSchema,
   getMatchHeroDamageTimeline,
 } from "../server/damage-by-source.js";
+import {
+  damageDoneByTargetInputSchema,
+  getMatchHeroDamageDoneTimeline,
+} from "../server/damage-done-by-target.js";
 import { getMatchRollingGpm, rollingGpmInputSchema } from "../server/gpm.js";
 import { ensureIngestionCoordinator } from "../server/ingestion-runtime.js";
 import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
@@ -72,6 +76,10 @@ export const getMatchRollingGpmFn = createServerFn({ method: "GET" })
 export const getMatchDamageBySourceFn = createServerFn({ method: "GET" })
   .validator(damageBySourceInputSchema)
   .handler(({ data }) => getMatchHeroDamageTimeline(data));
+
+export const getMatchDamageDoneByTargetFn = createServerFn({ method: "GET" })
+  .validator(damageDoneByTargetInputSchema)
+  .handler(({ data }) => getMatchHeroDamageDoneTimeline(data));
 
 export const getMatchHeroHeatmapFn = createServerFn({ method: "GET" })
   .validator(heroHeatmapInputSchema)

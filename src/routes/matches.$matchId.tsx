@@ -4,6 +4,7 @@ import { ArrowLeft, BarChart3, Clock3, ImageOff, Shield, Swords, Trophy } from "
 import { useState } from "react";
 import type { MatchOverviewPlayer, MatchOverviewTeamTotals } from "../server/overview";
 import { DamageBySourceSection } from "../web/damage-by-source-section";
+import { DamageDoneByTargetSection } from "../web/damage-done-by-target-section";
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
 import { GpmSection } from "../web/gpm-section";
 import { HeroHeatmapSection } from "../web/hero-heatmap-section";
@@ -134,6 +135,8 @@ function MatchDetail() {
     />
 
     <DamageBySourceSection key={matchId} matchId={matchId} players={match.players} />
+
+    <DamageDoneByTargetSection key={matchId} matchId={matchId} players={match.players} />
 
     <HeroHeatmapSection
       key={matchId}

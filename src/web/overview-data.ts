@@ -1,10 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { MatchHeroDamageTimeline } from "../server/damage-by-source.js";
+import type { MatchHeroDamageDoneTimeline } from "../server/damage-done-by-target.js";
 import type { MatchRollingGpm, RollingGpmWindowSeconds } from "../server/gpm.js";
 import type { MatchListItem, MatchOverview } from "../server/overview.js";
 import type { MatchHeroHeatmap } from "../server/hero-positions.js";
 import type { MatchWinProbability } from "../server/win-probability.js";
 import {
+  getMatchDamageDoneByTargetFn,
   getMatchDamageBySourceFn,
   getMatchHeroHeatmapFn,
   getMatchOverviewFn,
@@ -14,6 +16,7 @@ import {
 } from "./functions.js";
 
 export type {
+  MatchHeroDamageDoneTimeline,
   MatchHeroDamageTimeline,
   MatchHeroHeatmap,
   MatchListItem,
@@ -29,6 +32,8 @@ export const overviewQueryKeys = {
     ["match-rolling-gpm", matchId, windowSeconds, outputStepSeconds] as const,
   damageBySource: (matchId: string, playerSlot: number) =>
     ["match-damage-by-source", matchId, playerSlot] as const,
+  damageDoneByTarget: (matchId: string, playerSlot: number) =>
+    ["match-damage-done-by-target", matchId, playerSlot] as const,
   heroHeatmap: (
     matchId: string,
     startMilliseconds: number,
@@ -62,6 +67,13 @@ export const matchRollingGpmQuery = (
 export const matchDamageBySourceQuery = (matchId: string, playerSlot: number) => queryOptions({
   queryKey: overviewQueryKeys.damageBySource(matchId, playerSlot),
   queryFn: (): Promise<MatchHeroDamageTimeline> => getMatchDamageBySourceFn({
+    data: { matchId, playerSlot },
+  }),
+});
+
+export const matchDamageDoneByTargetQuery = (matchId: string, playerSlot: number) => queryOptions({
+  queryKey: overviewQueryKeys.damageDoneByTarget(matchId, playerSlot),
+  queryFn: (): Promise<MatchHeroDamageDoneTimeline> => getMatchDamageDoneByTargetFn({
     data: { matchId, playerSlot },
   }),
 });
