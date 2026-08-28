@@ -70,7 +70,7 @@ export function DamageBySourceSection({ matchId, players }: {
           Showing <strong>{query.data.target?.heroName ?? "selected hero"}</strong>.
         </p>
         <p className="rounded-lg bg-[#eef0e9] px-2.5 py-1 font-mono text-xs font-semibold text-[#526158]">
-          {formatDamage(query.data.totalDamage)} total damage
+          {formatDamage(query.data.totalDamage)} total combat-log damage
         </p>
       </div>
       <DamageBySourceChart
@@ -102,19 +102,19 @@ function IntervalDetail({ interval }: { interval: DamageInterval }) {
       {interval.sources.map((source) => <li key={source.rawName} className="rounded-xl bg-[#eef0e9] p-4">
         <div className="flex items-baseline justify-between gap-3">
           <h4 className="font-semibold">{source.label}</h4>
-          <span className="font-mono text-xs font-semibold text-[#526158]">{formatDamage(source.damage)} damage</span>
+          <span className="font-mono text-xs font-semibold text-[#526158]">{formatDamage(source.damage)} combat-log damage</span>
         </div>
         <ol className="mt-3 space-y-3">
           {source.via.map((via) => <li key={`${via.kind}:${via.rawName ?? "direct"}`} className="rounded-lg bg-white p-3">
             <div className="flex items-baseline justify-between gap-3">
               <h5 className="text-sm font-semibold">{via.kind === "direct" ? via.label : `via ${via.label}`}</h5>
-              <span className="font-mono text-xs text-[#526158]">{formatDamage(via.damage)} damage</span>
+              <span className="font-mono text-xs text-[#526158]">{formatDamage(via.damage)} combat-log damage</span>
             </div>
             <ol className="mt-2 space-y-2">
               {via.mechanisms.map((mechanism) => <li key={mechanism.rawName ?? "attack"}>
                 <div className="flex items-baseline justify-between gap-3 border-b border-[#e4e7e1] pb-1.5">
                   <h6 className="text-xs font-bold uppercase tracking-[0.06em] text-[#405047]">{mechanism.label}</h6>
-                  <span className="font-mono text-xs text-[#526158]">{formatDamage(mechanism.damage)} damage</span>
+                  <span className="font-mono text-xs text-[#526158]">{formatDamage(mechanism.damage)} combat-log damage</span>
                 </div>
                 <ol className="mt-1 divide-y divide-[#e4e7e1]">
                   {mechanism.events.map((event) => <li key={event.sequence} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
