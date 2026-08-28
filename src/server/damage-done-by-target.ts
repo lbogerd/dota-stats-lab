@@ -7,7 +7,7 @@ import { withReadOnlyWarehouse } from "./warehouse.js";
 
 const INTERVAL_SECONDS = 30 as const;
 
-export const damageBySourceInputSchema = z.object({
+export const damageDoneByTargetInputSchema = z.object({
   matchId: z.string().refine(
     isValidMatchId,
     "Enter a positive match ID in the DuckDB UBIGINT range.",
@@ -15,63 +15,72 @@ export const damageBySourceInputSchema = z.object({
   playerSlot: z.number().int().min(0).max(255),
 }).strict();
 
-export type DamageBySourceInput = z.infer<typeof damageBySourceInputSchema>;
+export type DamageDoneByTargetInput = z.infer<typeof damageDoneByTargetInputSchema>;
 
-export interface DamageEvent {
+export interface DamageDoneDealerVia {
+  rawName: string | null;
+  label: string;
+  kind: "direct" | "unit" | "illusion";
+}
+
+export interface DamageDoneEvent {
   sequence: string;
   gameTimeSeconds: number;
   rawTimeSeconds: number | null;
   damage: number;
   attackerTeam: number | null;
+  targetTeam: number | null;
   damageType: number | null;
   spellGeneratedAttack: boolean;
+  dealerVia: DamageDoneDealerVia;
 }
 
-export interface DamageMechanism {
+export interface DamageDoneMechanism {
   rawName: string | null;
   label: string;
   damage: number;
-  events: DamageEvent[];
+  events: DamageDoneEvent[];
 }
 
-export interface DamageVia {
+export interface DamageTargetVia {
   rawName: string | null;
   label: string;
   kind: "direct" | "unit" | "illusion";
   damage: number;
-  mechanisms: DamageMechanism[];
+  mechanisms: DamageDoneMechanism[];
 }
 
-export interface DamageSource {
+export interface DamageTarget {
   rawName: string;
   label: string;
+  teamId: number | null;
   damage: number;
-  via: DamageVia[];
+  via: DamageTargetVia[];
 }
 
-export interface DamageInterval {
+export interface DamageDoneInterval {
   startSeconds: number;
   endSeconds: number;
   totalDamage: number;
-  sources: DamageSource[];
+  targets: DamageTarget[];
 }
 
-export interface MatchHeroDamageTimeline {
+export interface MatchHeroDamageDoneTimeline {
   matchId: string;
   playerSlot: number;
   intervalSeconds: typeof INTERVAL_SECONDS;
   available: boolean;
-  target: {
+  dealer: {
     heroId: number | null;
     heroName: string;
     playerName: string | null;
     teamId: number;
   } | null;
   totalDamage: number;
-  intervals: DamageInterval[];
+  intervals: DamageDoneInterval[];
 }
 
-interface SelectedTarget {
+interface SelectedDealer {
   extractionId: string;
   heroId: number | null;
   playerName: string | null;
@@ -79,57 +88,68 @@ interface SelectedTarget {
   hasGameStateMarkers: boolean;
 }
 
-interface RawDamageEvent extends DamageEvent {
+interface RawDamageDoneEvent {
+  sequence: string;
+  gameTimeSeconds: number;
+  rawTimeSeconds: number | null;
+  damage: number;
   attackerName: string | null;
   damageSourceName: string | null;
   inflictorName: string | null;
+  targetName: string | null;
+  targetSourceName: string | null;
+  attackerTeam: number | null;
+  targetTeam: number | null;
+  damageType: number | null;
   attackerIllusion: boolean;
+  targetIllusion: boolean;
+  spellGeneratedAttack: boolean;
 }
 
-export async function getMatchHeroDamageTimeline(
-  input: DamageBySourceInput,
-): Promise<MatchHeroDamageTimeline> {
-  const validated = damageBySourceInputSchema.parse(input);
+export async function getMatchHeroDamageDoneTimeline(
+  input: DamageDoneByTargetInput,
+): Promise<MatchHeroDamageDoneTimeline> {
+  const validated = damageDoneByTargetInputSchema.parse(input);
   const matchId = parseMatchId(validated.matchId);
 
   return withReadOnlyWarehouse(async (connection) => {
-    const targetResult = await connection.runAndReadAll(TARGET_SQL, {
+    const dealerResult = await connection.runAndReadAll(DEALER_SQL, {
       matchId,
       playerSlot: validated.playerSlot,
     });
-    const targetRow = targetResult.getRowObjectsJson()[0];
-    if (targetRow === undefined) {
+    const dealerRow = dealerResult.getRowObjectsJson()[0];
+    if (dealerRow === undefined) {
       throw new Error(`Player slot ${validated.playerSlot} was not found in match ${matchId}.`);
     }
 
-    const selectedTarget = parseSelectedTarget(targetRow);
-    const hero = getHeroDisplayData(selectedTarget.heroId);
-    const target = {
-      heroId: selectedTarget.heroId,
-      heroName: hero?.name ?? (selectedTarget.heroId === null
+    const selectedDealer = parseSelectedDealer(dealerRow);
+    const hero = getHeroDisplayData(selectedDealer.heroId);
+    const dealer = {
+      heroId: selectedDealer.heroId,
+      heroName: hero?.name ?? (selectedDealer.heroId === null
         ? "Unknown hero"
-        : `Hero #${selectedTarget.heroId}`),
-      playerName: selectedTarget.playerName,
-      teamId: selectedTarget.teamId,
+        : `Hero #${selectedDealer.heroId}`),
+      playerName: selectedDealer.playerName,
+      teamId: selectedDealer.teamId,
     };
     const base = {
       matchId: matchId.toString(),
       playerSlot: validated.playerSlot,
       intervalSeconds: INTERVAL_SECONDS,
-      target,
+      dealer,
     };
-    const targetCombatLogName = getHeroCombatLogName(selectedTarget.heroId);
-    if (!selectedTarget.hasGameStateMarkers || targetCombatLogName === null) {
+    const dealerCombatLogName = getHeroCombatLogName(selectedDealer.heroId);
+    if (!selectedDealer.hasGameStateMarkers || dealerCombatLogName === null) {
       return { ...base, available: false, totalDamage: 0, intervals: [] };
     }
 
     const eventResult = await connection.runAndReadAll(DAMAGE_EVENTS_SQL, {
-      extractionId: selectedTarget.extractionId,
-      targetName: targetCombatLogName,
-      targetTeam: selectedTarget.teamId,
+      extractionId: selectedDealer.extractionId,
+      dealerName: dealerCombatLogName,
+      dealerTeam: selectedDealer.teamId,
     });
-    const events = eventResult.getRowObjectsJson().map(parseDamageEvent);
-    const grouped = groupDamageEvents(events);
+    const events = eventResult.getRowObjectsJson().map(parseDamageDoneEvent);
+    const grouped = groupDamageDoneEvents(events);
     return {
       ...base,
       available: true,
@@ -139,17 +159,17 @@ export async function getMatchHeroDamageTimeline(
   });
 }
 
-function parseSelectedTarget(row: Record<string, JsonValue>): SelectedTarget {
+function parseSelectedDealer(row: Record<string, JsonValue>): SelectedDealer {
   return {
-    extractionId: requiredString(row.extraction_id, "target extraction ID"),
-    heroId: nullableInteger(row.hero_id, "target hero ID"),
-    playerName: nullableString(row.player_name, "target player name"),
-    teamId: integerValue(row.team_id, "target team ID"),
+    extractionId: requiredString(row.extraction_id, "dealer extraction ID"),
+    heroId: nullableInteger(row.hero_id, "dealer hero ID"),
+    playerName: nullableString(row.player_name, "dealer player name"),
+    teamId: integerValue(row.team_id, "dealer team ID"),
     hasGameStateMarkers: booleanValue(row.has_game_state_markers, "game-state marker availability"),
   };
 }
 
-function parseDamageEvent(row: Record<string, JsonValue>): RawDamageEvent {
+function parseDamageDoneEvent(row: Record<string, JsonValue>): RawDamageDoneEvent {
   const sequence = requiredString(row.sequence, "damage sequence");
   if (!/^[0-9]+$/.test(sequence)) throw new Error("Unexpected damage sequence");
   return {
@@ -157,21 +177,25 @@ function parseDamageEvent(row: Record<string, JsonValue>): RawDamageEvent {
     gameTimeSeconds: finiteNumber(row.game_time_seconds, "damage game time"),
     rawTimeSeconds: nullableNumber(row.raw_time_seconds, "damage raw time"),
     damage: integerValue(row.damage, "damage value"),
-    attackerTeam: nullableInteger(row.attacker_team, "damage attacker team"),
-    damageType: nullableInteger(row.damage_type, "damage type"),
-    spellGeneratedAttack: booleanValue(row.spell_generated_attack, "spell-generated attack"),
     attackerName: nullableName(row.attacker_name, "damage attacker name"),
     damageSourceName: nullableName(row.damage_source_name, "damage source name"),
     inflictorName: nullableName(row.inflictor_name, "damage inflictor name"),
+    targetName: nullableName(row.target_name, "damage target name"),
+    targetSourceName: nullableName(row.target_source_name, "damage target source name"),
+    attackerTeam: nullableInteger(row.attacker_team, "damage attacker team"),
+    targetTeam: nullableInteger(row.target_team, "damage target team"),
+    damageType: nullableInteger(row.damage_type, "damage type"),
     attackerIllusion: booleanValue(row.attacker_illusion, "damage attacker illusion"),
+    targetIllusion: booleanValue(row.target_illusion, "damage target illusion"),
+    spellGeneratedAttack: booleanValue(row.spell_generated_attack, "spell-generated attack"),
   };
 }
 
-function groupDamageEvents(events: RawDamageEvent[]): {
+function groupDamageDoneEvents(events: RawDamageDoneEvent[]): {
   totalDamage: number;
-  intervals: DamageInterval[];
+  intervals: DamageDoneInterval[];
 } {
-  const intervals = new Map<number, DamageInterval>();
+  const intervals = new Map<number, DamageDoneInterval>();
   events.sort(compareEvents);
 
   for (const row of events) {
@@ -180,22 +204,30 @@ function groupDamageEvents(events: RawDamageEvent[]): {
       startSeconds,
       endSeconds: startSeconds + INTERVAL_SECONDS,
       totalDamage: 0,
-      sources: [],
+      targets: [],
     };
-    const sourceRawName = row.damageSourceName ?? row.attackerName ?? "Unknown source";
-    let source = interval.sources.find((candidate) => candidate.rawName === sourceRawName);
-    if (source === undefined) {
-      source = { rawName: sourceRawName, label: formatDotaName(sourceRawName), damage: 0, via: [] };
-      interval.sources.push(source);
+    const targetRawName = row.targetSourceName ?? row.targetName ?? "Unknown target";
+    let target = interval.targets.find((candidate) =>
+      candidate.rawName === targetRawName && candidate.teamId === row.targetTeam
+    );
+    if (target === undefined) {
+      target = {
+        rawName: targetRawName,
+        label: formatDotaName(targetRawName),
+        teamId: row.targetTeam,
+        damage: 0,
+        via: [],
+      };
+      interval.targets.push(target);
     }
 
-    const viaIdentity = viaForEvent(row, sourceRawName);
-    let via = source.via.find((candidate) =>
+    const viaIdentity = targetViaForEvent(row, targetRawName);
+    let via = target.via.find((candidate) =>
       candidate.kind === viaIdentity.kind && candidate.rawName === viaIdentity.rawName
     );
     if (via === undefined) {
       via = { ...viaIdentity, damage: 0, mechanisms: [] };
-      source.via.push(via);
+      target.via.push(via);
     }
 
     const mechanismRawName = row.inflictorName;
@@ -210,29 +242,31 @@ function groupDamageEvents(events: RawDamageEvent[]): {
       via.mechanisms.push(mechanism);
     }
 
-    const event: DamageEvent = {
+    const event: DamageDoneEvent = {
       sequence: row.sequence,
       gameTimeSeconds: row.gameTimeSeconds,
       rawTimeSeconds: row.rawTimeSeconds,
       damage: row.damage,
       attackerTeam: row.attackerTeam,
+      targetTeam: row.targetTeam,
       damageType: row.damageType,
       spellGeneratedAttack: row.spellGeneratedAttack,
+      dealerVia: dealerViaForEvent(row),
     };
     mechanism.events.push(event);
     mechanism.damage += row.damage;
     via.damage += row.damage;
-    source.damage += row.damage;
+    target.damage += row.damage;
     interval.totalDamage += row.damage;
     intervals.set(startSeconds, interval);
   }
 
   const result = [...intervals.values()].sort((left, right) => left.startSeconds - right.startSeconds);
   for (const interval of result) {
-    interval.sources.sort(compareDamageGroups);
-    for (const source of interval.sources) {
-      source.via.sort(compareDamageGroups);
-      for (const via of source.via) {
+    interval.targets.sort(compareTargets);
+    for (const target of interval.targets) {
+      target.via.sort(compareDamageGroups);
+      for (const via of target.via) {
         via.mechanisms.sort(compareDamageGroups);
         for (const mechanism of via.mechanisms) mechanism.events.sort(compareEvents);
       }
@@ -244,10 +278,31 @@ function groupDamageEvents(events: RawDamageEvent[]): {
   };
 }
 
-function viaForEvent(
-  event: RawDamageEvent,
-  sourceRawName: string,
-): Pick<DamageVia, "rawName" | "label" | "kind"> {
+function targetViaForEvent(
+  event: RawDamageDoneEvent,
+  targetRawName: string,
+): Pick<DamageTargetVia, "rawName" | "label" | "kind"> {
+  if (event.targetIllusion) {
+    return {
+      rawName: event.targetName,
+      label: `${event.targetName === null ? "Unknown unit" : formatDotaName(event.targetName)} illusion`,
+      kind: "illusion",
+    };
+  }
+  if (event.targetName !== null && event.targetName !== targetRawName) {
+    return {
+      rawName: event.targetName,
+      label: formatDotaName(event.targetName),
+      kind: "unit",
+    };
+  }
+  return { rawName: null, label: "Direct", kind: "direct" };
+}
+
+function dealerViaForEvent(
+  event: RawDamageDoneEvent,
+): DamageDoneDealerVia {
+  const dealerRawName = event.damageSourceName ?? event.attackerName;
   if (event.attackerIllusion) {
     return {
       rawName: event.attackerName,
@@ -255,7 +310,7 @@ function viaForEvent(
       kind: "illusion",
     };
   }
-  if (event.attackerName !== null && event.attackerName !== sourceRawName) {
+  if (event.attackerName !== null && event.attackerName !== dealerRawName) {
     return {
       rawName: event.attackerName,
       label: formatDotaName(event.attackerName),
@@ -265,13 +320,23 @@ function viaForEvent(
   return { rawName: null, label: "Direct", kind: "direct" };
 }
 
-function compareEvents(left: Pick<DamageEvent, "gameTimeSeconds" | "sequence">, right: Pick<DamageEvent, "gameTimeSeconds" | "sequence">): number {
+function compareEvents(
+  left: Pick<DamageDoneEvent, "gameTimeSeconds" | "sequence">,
+  right: Pick<DamageDoneEvent, "gameTimeSeconds" | "sequence">,
+): number {
   if (left.gameTimeSeconds !== right.gameTimeSeconds) {
     return left.gameTimeSeconds - right.gameTimeSeconds;
   }
   const leftSequence = BigInt(left.sequence);
   const rightSequence = BigInt(right.sequence);
   return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
+}
+
+function compareTargets(left: DamageTarget, right: DamageTarget): number {
+  return right.damage - left.damage
+    || left.label.localeCompare(right.label)
+    || left.rawName.localeCompare(right.rawName)
+    || compareNullableNumbers(left.teamId, right.teamId);
 }
 
 function compareDamageGroups(
@@ -281,6 +346,10 @@ function compareDamageGroups(
   return right.damage - left.damage
     || left.label.localeCompare(right.label)
     || (left.rawName ?? "").localeCompare(right.rawName ?? "");
+}
+
+function compareNullableNumbers(left: number | null, right: number | null): number {
+  return left === right ? 0 : left === null ? -1 : right === null ? 1 : left - right;
 }
 
 function requiredString(value: JsonValue | undefined, label: string): string {
@@ -326,7 +395,7 @@ function booleanValue(value: JsonValue | undefined, label: string): boolean {
   return value;
 }
 
-const TARGET_SQL = `
+const DEALER_SQL = `
 SELECT
   player.extraction_id,
   player.hero_id,
@@ -367,17 +436,20 @@ SELECT
   event.attacker_name,
   event.damage_source_name,
   event.inflictor_name,
+  event.target_name,
+  event.target_source_name,
   event.attacker_team,
+  event.target_team,
   event.damage_type,
-  coalesce(event.spell_generated_attack, false) AS spell_generated_attack,
-  coalesce(event.attacker_illusion, false) AS attacker_illusion
+  coalesce(event.attacker_illusion, false) AS attacker_illusion,
+  coalesce(event.target_illusion, false) AS target_illusion,
+  coalesce(event.spell_generated_attack, false) AS spell_generated_attack
 FROM raw.combat_events AS event
 WHERE event.extraction_id = $extractionId
   AND event.event_type = 'DOTA_COMBATLOG_DAMAGE'
   AND analysis.is_actual_game(event.extraction_id, event.sequence)
-  AND event.target_name = $targetName
-  AND event.target_team = $targetTeam
-  AND NOT coalesce(event.target_illusion, false)
+  AND coalesce(nullif(event.damage_source_name, ''), nullif(event.attacker_name, '')) = $dealerName
+  AND event.attacker_team = $dealerTeam
   AND event.game_time IS NOT NULL
   AND event.value IS NOT NULL
 ORDER BY event.game_time, event.sequence`;
