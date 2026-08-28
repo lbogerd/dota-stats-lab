@@ -38,6 +38,7 @@ interface DamageChartRow {
 
 const MAX_NAMED_SERIES = 7;
 const OTHER_SERIES_ID = "__other__";
+const INITIAL_CHART_WIDTH = 760;
 const COLORS = [
   "#315f4a",
   "#d45f4a",
@@ -76,6 +77,7 @@ export function DamageBySourceChart({ intervals, selectedStartSeconds, onSelectI
   const minimumTime = orderedIntervals[0]?.startSeconds ?? 0;
   const maximumTime = Math.max(orderedIntervals.at(-1)?.endSeconds ?? 0, minimumTime + 30);
   const maximumDamage = Math.max(...orderedIntervals.map((interval) => interval.totalDamage), 1);
+  const intervalThickness = INITIAL_CHART_WIDTH * 0.8 * 30 / (maximumTime - minimumTime);
   const definition = useMemo(() => defineChart({
     marks: [
       barY(rows, {
@@ -87,6 +89,7 @@ export function DamageBySourceChart({ intervals, selectedStartSeconds, onSelectI
         fill: (row) => row.color,
         layout: stack({ order: series.map((item) => item.id) }),
         inset: 1,
+        maxThickness: intervalThickness,
         radius: 1,
       }),
       crosshair({ x: { label: false }, y: false }),
@@ -124,7 +127,7 @@ export function DamageBySourceChart({ intervals, selectedStartSeconds, onSelectI
       grid: "#e2e5dd",
       background: "transparent",
     },
-  }), [maximumDamage, maximumTime, minimumTime, rows, series]);
+  }), [intervalThickness, maximumDamage, maximumTime, minimumTime, rows, series]);
 
   const updateSelectedInterval = (points: readonly ChartPoint<DamageChartRow, number, number>[]) => {
     const nextStartSeconds = points[0]?.datum.intervalStartSeconds;
@@ -148,7 +151,7 @@ export function DamageBySourceChart({ intervals, selectedStartSeconds, onSelectI
     <Chart
       definition={definition}
       height={300}
-      initialWidth={760}
+      initialWidth={INITIAL_CHART_WIDTH}
       className="dota-damage-by-source-chart mt-3 rounded-lg outline-none focus-within:ring-2 focus-within:ring-[#4f765f] focus-within:ring-offset-2"
       ariaLabel="Damage taken by source, interactive stacked bar chart"
       ariaDescription={description}
