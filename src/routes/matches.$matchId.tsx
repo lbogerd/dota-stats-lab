@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, BarChart3, Clock3, ImageOff, Shield, Swords, Trophy } from "lucide-react";
 import { useState } from "react";
 import type { MatchOverviewPlayer, MatchOverviewTeamTotals } from "../server/overview";
+import { DamageBySourceSection } from "../web/damage-by-source-section";
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
 import { GpmSection } from "../web/gpm-section";
 import { HeroHeatmapSection } from "../web/hero-heatmap-section";
@@ -131,6 +132,8 @@ function MatchDetail() {
       radiantName={teamName(2, summary.radiantTeamName)}
       direName={teamName(3, summary.direTeamName)}
     />
+
+    <DamageBySourceSection key={matchId} matchId={matchId} players={match.players} />
 
     <HeroHeatmapSection
       key={matchId}
