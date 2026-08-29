@@ -5,6 +5,7 @@ import type { MatchOverviewPlayer } from "../server/overview.js";
 import { DamageBySourceChart } from "./damage-by-source-chart.js";
 import { heroAsset } from "./dota-assets.js";
 import { matchDamageBySourceQuery } from "./overview-data.js";
+import { formatDamageTime } from "./stacked-damage-interval-chart.js";
 
 export function DamageBySourceSection({ matchId, players }: {
   matchId: string;
@@ -146,16 +147,6 @@ function playerOptionLabel(player: MatchOverviewPlayer): string {
   const anonymousIndex = (player.teamSlot ?? player.playerSlot) + 1;
   const playerName = player.playerName?.trim() || `Anonymous player ${anonymousIndex}`;
   return `${playerName} · ${heroAsset(player.heroId).name} · ${player.team}`;
-}
-
-export function formatDamageTime(seconds: number, milliseconds = false): string {
-  const sign = seconds < 0 ? "-" : "";
-  const absoluteSeconds = Math.abs(seconds);
-  const minutes = Math.floor(absoluteSeconds / 60);
-  const remainingSeconds = absoluteSeconds - minutes * 60;
-  const precision = milliseconds ? 3 : 0;
-  const width = milliseconds ? 6 : 2;
-  return `${sign}${minutes}:${remainingSeconds.toFixed(precision).padStart(width, "0")}`;
 }
 
 function formatDamage(damage: number): string {

@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import {
-  formatDamageTime,
   StackedDamageIntervalChart,
   type StackedDamageChartInterval,
 } from "./stacked-damage-interval-chart";
@@ -44,5 +43,3 @@ export function DamageBySourceChart({ intervals, selectedStartSeconds, onSelectI
     markId="damage-by-source"
   />;
 }
-
-export { formatDamageTime };

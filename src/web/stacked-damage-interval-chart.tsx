@@ -181,13 +181,16 @@ export function StackedDamageIntervalChart({
   </figure>;
 }
 
-export function formatDamageTime(seconds: number): string {
+export function formatDamageTime(seconds: number, milliseconds = false): string {
   const sign = seconds < 0 ? "-" : "";
-  const milliseconds = Math.round(Math.abs(seconds) * 1_000);
-  const minutes = Math.floor(milliseconds / 60_000);
-  const secondsPart = Math.floor(milliseconds / 1_000) % 60;
-  const millisecondsPart = milliseconds % 1_000;
-  return `${sign}${minutes}:${String(secondsPart).padStart(2, "0")}${millisecondsPart === 0 ? "" : `.${String(millisecondsPart).padStart(3, "0")}`}`;
+  const absoluteMilliseconds = Math.round(Math.abs(seconds) * 1_000);
+  const minutes = Math.floor(absoluteMilliseconds / 60_000);
+  const secondsPart = Math.floor(absoluteMilliseconds / 1_000) % 60;
+  const millisecondsPart = absoluteMilliseconds % 1_000;
+  const fraction = milliseconds || millisecondsPart !== 0
+    ? `.${String(millisecondsPart).padStart(3, "0")}`
+    : "";
+  return `${sign}${minutes}:${String(secondsPart).padStart(2, "0")}${fraction}`;
 }
 
 function buildSeries(intervals: readonly StackedDamageChartInterval[]): DamageSeries[] {

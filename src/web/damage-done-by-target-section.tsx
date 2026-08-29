@@ -5,6 +5,7 @@ import type { MatchOverviewPlayer } from "../server/overview.js";
 import { DamageDoneByTargetChart } from "./damage-done-by-target-chart.js";
 import { heroAsset } from "./dota-assets.js";
 import { matchDamageDoneByTargetQuery } from "./overview-data.js";
+import { formatDamageTime } from "./stacked-damage-interval-chart.js";
 
 export function DamageDoneByTargetSection({ matchId, players }: {
   matchId: string;
@@ -92,7 +93,7 @@ function IntervalDetail({ interval }: { interval: DamageDoneInterval }) {
   return <section className="rounded-xl border border-[#d8ddd5] bg-white p-4 sm:p-5" aria-labelledby={titleId}>
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h3 id={titleId} className="text-base font-semibold">
-        Interval {formatDamageDoneTime(interval.startSeconds)}–{formatDamageDoneTime(interval.endSeconds)}
+        Interval {formatDamageTime(interval.startSeconds)}–{formatDamageTime(interval.endSeconds)}
       </h3>
       <p className="font-mono text-sm font-semibold text-[#315f4a]">
         {formatDamage(interval.totalDamage)} combat-log damage
@@ -121,7 +122,7 @@ function IntervalDetail({ interval }: { interval: DamageDoneInterval }) {
                 </div>
                 <ol className="mt-1 divide-y divide-[#e4e7e1]">
                   {mechanism.events.map((event) => <li key={event.sequence} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                    <time className="font-mono text-[#405047]">{formatDamageDoneTime(event.gameTimeSeconds, true)}</time>
+                    <time className="font-mono text-[#405047]">{formatDamageTime(event.gameTimeSeconds, true)}</time>
                     <span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
                       {event.dealerVia.kind !== "direct" && <span className="text-xs font-semibold text-[#526158]">dealt by {event.dealerVia.label}</span>}
                       <span className="font-semibold">{formatDamage(event.damage)} combat-log damage</span>
@@ -152,16 +153,6 @@ function playerOptionLabel(player: MatchOverviewPlayer): string {
   const anonymousIndex = (player.teamSlot ?? player.playerSlot) + 1;
   const playerName = player.playerName?.trim() || `Anonymous player ${anonymousIndex}`;
   return `${playerName} · ${heroAsset(player.heroId).name} · ${player.team}`;
-}
-
-export function formatDamageDoneTime(seconds: number, milliseconds = false): string {
-  const sign = seconds < 0 ? "-" : "";
-  const absoluteSeconds = Math.abs(seconds);
-  const minutes = Math.floor(absoluteSeconds / 60);
-  const remainingSeconds = absoluteSeconds - minutes * 60;
-  const precision = milliseconds ? 3 : 0;
-  const width = milliseconds ? 6 : 2;
-  return `${sign}${minutes}:${remainingSeconds.toFixed(precision).padStart(width, "0")}`;
 }
 
 function formatDamage(damage: number): string {

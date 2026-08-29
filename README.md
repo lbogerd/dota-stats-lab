@@ -1,6 +1,6 @@
 # Dota Replay Data Lab
 
-This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), and hero position heat maps. TanStack Charts renders every graph and heat map.
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), combat-log damage timelines, and hero position heat maps. TanStack Charts renders every graph and heat map.
 
 The default `match-analysis-v3` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
@@ -201,7 +201,7 @@ Run these queries with `./dota sql`. The browser editor accepts one bounded, rea
 
 ## Website
 
-`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, Valve win probability, rolling GPM, and a hero position heat map. The probability chart uses the server values in the replay. It does not estimate values from net worth, kills, or other match data. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Exact probability and GPM values can be inspected with pointer input or the keyboard.
+`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, Valve win probability, rolling GPM, combat-log damage, and a hero position heat map. The two damage timelines show damage taken by source and damage done by target in fixed 30-second intervals. Their detail views preserve controlled-unit, illusion, mechanism, and event attribution. The probability chart uses the server values in the replay. It does not estimate values from net worth, kills, or other match data. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Exact probability, GPM, and damage values can be inspected with pointer input or the keyboard.
 
 Schema-version-1 and schema-version-2 extractions have no win-probability staging file. The match page shows an unavailable state for them. Re-extract a cached or archived replay with the current parser to add the server series; the application does not construct a replacement series when the replay is unavailable.
 
@@ -243,7 +243,7 @@ Package versions are pinned in `package.json` and `pnpm-lock.yaml`.
 
 ## Tests and real replay fixtures
 
-Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM and win-probability analysis, hero-position grids, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, query keys, TanStack chart interaction, heat-map controls and rendering, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, server win-probability capture, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile probability, GPM, and heat-map states.
+Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM and win-probability analysis, combat-log damage attribution, hero-position grids, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, query keys, TanStack chart interaction, damage timeline details, heat-map controls and rendering, loading/error/empty states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, server win-probability capture, game-clock capture, and 100 ms hero-position sampling. Playwright covers the phone workflow and a real match overview, including its mobile probability, GPM, damage timeline, and heat-map states.
 
 Large or unlicensed replays are never committed. To use your own parser fixture, keep it outside Git and run:
 

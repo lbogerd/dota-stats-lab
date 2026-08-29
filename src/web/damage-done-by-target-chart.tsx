@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import {
-  formatDamageTime,
   StackedDamageIntervalChart,
   type StackedDamageChartInterval,
 } from "./stacked-damage-interval-chart";
@@ -60,8 +59,6 @@ export function DamageDoneByTargetChart({ intervals, selectedStartSeconds, onSel
     markId="damage-done-by-target"
   />;
 }
-
-export { formatDamageTime };
 
 function visibleTargetLabels(intervals: readonly DamageDoneByTargetChartInterval[]): ReadonlyMap<string, string> {
   const totals = new Map<string, TargetTotal>();

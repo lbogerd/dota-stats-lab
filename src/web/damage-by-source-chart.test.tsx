@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { DamageBySourceChart, formatDamageTime, type DamageBySourceChartInterval } from "./damage-by-source-chart";
+import { DamageBySourceChart, type DamageBySourceChartInterval } from "./damage-by-source-chart";
+import { formatDamageTime } from "./stacked-damage-interval-chart";
 
 const intervals: DamageBySourceChartInterval[] = [
   {
@@ -93,5 +94,7 @@ describe("damage chart time formatting", () => {
     expect(formatDamageTime(-30.125)).toBe("-0:30.125");
     expect(formatDamageTime(0)).toBe("0:00");
     expect(formatDamageTime(3_725.75)).toBe("62:05.750");
+    expect(formatDamageTime(-5.25, true)).toBe("-0:05.250");
+    expect(formatDamageTime(30, true)).toBe("0:30.000");
   });
 });

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MatchHeroDamageTimeline } from "../server/damage-by-source";
 import type { MatchOverviewPlayer } from "../server/overview";
-import { DamageBySourceSection, formatDamageTime } from "./damage-by-source-section";
+import { DamageBySourceSection } from "./damage-by-source-section";
 
 const getDamageBySource = vi.hoisted(() => vi.fn());
 
@@ -30,14 +30,6 @@ vi.mock("./damage-by-source-chart.js", () => ({
 }));
 
 const players = [player(0, 2, "Ari", 2), player(128, 3, "Dara", 3)];
-
-describe("damage time", () => {
-  it("formats negative and positive game time with optional milliseconds", () => {
-    expect(formatDamageTime(-5.25, true)).toBe("-0:05.250");
-    expect(formatDamageTime(65.125, true)).toBe("1:05.125");
-    expect(formatDamageTime(30)).toBe("0:30");
-  });
-});
 
 describe("DamageBySourceSection", () => {
   beforeEach(() => {

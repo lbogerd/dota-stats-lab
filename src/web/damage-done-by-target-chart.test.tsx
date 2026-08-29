@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   DamageDoneByTargetChart,
-  formatDamageTime,
   type DamageDoneByTargetChartInterval,
 } from "./damage-done-by-target-chart";
 
@@ -108,13 +107,5 @@ describe("DamageDoneByTargetChart", () => {
     expect(chart.querySelector("desc")?.textContent).toMatch(/from -0:30 to 1:00/i);
     expect(chart.querySelector("desc")?.textContent).toMatch(/quiet game-time gaps remain visible/i);
     expect(chart.querySelector("desc")?.textContent).toMatch(/left and right arrow keys/i);
-  });
-});
-
-describe("damage-done chart time formatting", () => {
-  it("formats negative and positive time with millisecond precision", () => {
-    expect(formatDamageTime(-30.125)).toBe("-0:30.125");
-    expect(formatDamageTime(0)).toBe("0:00");
-    expect(formatDamageTime(3_725.75)).toBe("62:05.750");
   });
 });
