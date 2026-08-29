@@ -2,7 +2,17 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { isValidMatchId } from "../lib/match-id.js";
 import { getCatalogStats, getMatchDetail, listMatches } from "../server/catalog.js";
+import {
+  damageBySourceInputSchema,
+  getMatchHeroDamageTimeline,
+} from "../server/damage-by-source.js";
+import {
+  damageDoneByTargetInputSchema,
+  getMatchHeroDamageDoneTimeline,
+} from "../server/damage-done-by-target.js";
+import { getMatchRollingGpm, rollingGpmInputSchema } from "../server/gpm.js";
 import { ensureIngestionCoordinator } from "../server/ingestion-runtime.js";
+import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
 import {
   createSavedQueryStore,
   renameSavedQueryInputSchema,
@@ -10,8 +20,6 @@ import {
   savedQueryNameInputSchema,
 } from "../server/saved-queries.js";
 import { getSqlCatalog } from "../server/sql-catalog.js";
-import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
-import { getMatchRollingGpm, rollingGpmInputSchema } from "../server/gpm.js";
 import { listHeroStats } from "../server/hero-stats.js";
 import { getMatchHeroHeatmap, heroHeatmapInputSchema } from "../server/hero-positions.js";
 import { getMatchWinProbability, winProbabilityInputSchema } from "../server/win-probability.js";
@@ -64,6 +72,14 @@ export const getMatchOverviewFn = createServerFn({ method: "GET" })
 export const getMatchRollingGpmFn = createServerFn({ method: "GET" })
   .validator(rollingGpmInputSchema)
   .handler(({ data }) => getMatchRollingGpm(data));
+
+export const getMatchDamageBySourceFn = createServerFn({ method: "GET" })
+  .validator(damageBySourceInputSchema)
+  .handler(({ data }) => getMatchHeroDamageTimeline(data));
+
+export const getMatchDamageDoneByTargetFn = createServerFn({ method: "GET" })
+  .validator(damageDoneByTargetInputSchema)
+  .handler(({ data }) => getMatchHeroDamageDoneTimeline(data));
 
 export const getMatchHeroHeatmapFn = createServerFn({ method: "GET" })
   .validator(heroHeatmapInputSchema)
