@@ -700,15 +700,20 @@ async function readNeutralCampDamageEvents(
             target_team, value, attacker_illusion
      FROM raw.combat_events
      WHERE extraction_id = $id
-       AND event_type = 'DOTA_COMBATLOG_DAMAGE'
+       AND event_type = $damageEventType
        AND value > 0
-       AND target_team = 4
-       AND starts_with(target_name, 'npc_dota_neutral_')
+       AND target_team = $neutralTeam
+       AND starts_with(target_name, $neutralTargetPrefix)
        AND attacker_illusion = false
        AND game_time IS NOT NULL
        AND isfinite(game_time)
      ORDER BY game_time, sequence`,
-    { id: extractionId },
+    {
+      id: extractionId,
+      damageEventType: NEUTRAL_CAMP_FARMING_V1_CONFIG.damageEventType,
+      neutralTeam: NEUTRAL_CAMP_FARMING_V1_CONFIG.neutralTeamNumber,
+      neutralTargetPrefix: NEUTRAL_CAMP_FARMING_V1_CONFIG.neutralTargetNamePrefix,
+    },
   );
   return result.getRowObjects().map((raw) => {
     const row = raw as Record<string, unknown>;

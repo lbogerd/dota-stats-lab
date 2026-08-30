@@ -335,6 +335,7 @@ test("direct-damage requirements and exactly-one roster mapping are enforced", (
     damage(10_000, { targetTeam: 3 }),
     damage(10_000, { targetName: "npc_dota_roshan" }),
     damage(10_000, { attackerIllusion: true }),
+    damage(10_000, { attackerIllusion: null }),
     damage(10_000, { attackerName: "npc_dota_hero_sven" }),
   ];
   for (const event of rejected) {

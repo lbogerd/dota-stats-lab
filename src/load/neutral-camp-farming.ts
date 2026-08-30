@@ -26,7 +26,7 @@ export interface NeutralCampFarmingDamageEvent {
   attackerName: string | null;
   targetTeam: number | null;
   damageValue: number;
-  attackerIllusion: boolean;
+  attackerIllusion: boolean | null;
 }
 
 export interface NeutralCampFarmingHeroPosition {
@@ -214,7 +214,7 @@ function isDirectHeroDamage(event: NeutralCampFarmingDamageEvent): boolean {
     && event.targetTeam === NEUTRAL_CAMP_FARMING_V1_CONFIG.neutralTeamNumber
     && event.targetName !== null
     && event.targetName.startsWith(NEUTRAL_CAMP_FARMING_V1_CONFIG.neutralTargetNamePrefix)
-    && !event.attackerIllusion;
+    && event.attackerIllusion === false;
 }
 
 function nearestPosition(

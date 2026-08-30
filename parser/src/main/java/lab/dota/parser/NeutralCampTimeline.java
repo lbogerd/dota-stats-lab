@@ -13,7 +13,7 @@ final class NeutralCampTimeline {
     static final String CREEP_CLASS = "CDOTA_BaseNPC_Creep_Neutral";
     static final long INVALID_SPAWNER_HANDLE = 16_777_215L;
 
-    private final Map<Long, NeutralEntity> entities = new HashMap<>();
+    private final Map<Long, NeutralEntity> entities = new LinkedHashMap<>();
     private final Set<Long> observedSpawnerHandles = new java.util.HashSet<>();
     private final Map<Long, Long> observedCreepSpawnerHandles = new HashMap<>();
     private int spawnerCount;
@@ -24,7 +24,7 @@ final class NeutralCampTimeline {
         observedSpawnerHandles.add(entity.handle());
         NeutralEntity state = new NeutralEntity(entity, true);
         entities.put(entity.uid(), state);
-        properties.forEach(property -> observe(state, property));
+        properties.forEach(property -> observe(state, property, true));
         List<Emission> emissions = new ArrayList<>();
         emitIdentityAndCreation(state, emissions);
         emitSpawnerCheckpointWhenComplete(state, emissions);
@@ -39,7 +39,7 @@ final class NeutralCampTimeline {
     List<Emission> onSpawnerUpdated(long uid, List<Property> properties) {
         NeutralEntity state = entities.get(uid);
         if (state == null || !state.spawner) return List.of();
-        properties.forEach(property -> observe(state, property));
+        properties.forEach(property -> observe(state, property, false));
         List<Emission> emissions = new ArrayList<>();
         emitSpawnerCheckpointWhenComplete(state, emissions);
         return emissions;
@@ -47,7 +47,7 @@ final class NeutralCampTimeline {
 
     List<Emission> onCreepCreated(EntityData entity, List<Property> properties) {
         NeutralEntity state = new NeutralEntity(entity, false);
-        properties.forEach(property -> observe(state, property));
+        properties.forEach(property -> observe(state, property, true));
         state.creationComplete = hasAllProperties(state, CREEP_PROPERTIES);
         entities.put(entity.uid(), state);
         rememberCreepSpawnerHandle(state);
@@ -243,10 +243,10 @@ final class NeutralCampTimeline {
         state.checkpointWritten = true;
     }
 
-    private static void observe(NeutralEntity state, Property property) {
+    private static void observe(NeutralEntity state, Property property, boolean creation) {
         if (isSelected(state.spawner, property.path())) {
             if (state.spawner && property.path().equals("m_Type")) {
-                state.properties.putIfAbsent(property.path(), property.value());
+                if (creation) state.properties.putIfAbsent(property.path(), property.value());
             } else if (!state.spawner || !state.checkpointWritten) {
                 state.properties.put(property.path(), property.value());
                 if (!state.spawner) state.currentProperties.put(property.path(), property.value());

@@ -112,6 +112,19 @@ class NeutralCampTimelineTest {
         assertEquals(1, checkpointValue(rows.get(0), "m_Type"));
     }
 
+    @Test void missingCreationCampTypeIsNeverBackfilledFromAnUpdate() {
+        NeutralCampTimeline timeline = new NeutralCampTimeline();
+        List<NeutralCampTimeline.Property> missingType = spawnerProperties().stream()
+                .filter(property -> !property.path().equals("m_Type"))
+                .toList();
+        assertEquals(List.of("entityInstances", "entityEvents"), logicalFiles(
+                timeline.onSpawnerCreated(
+                        entity(1, 101, NeutralCampTimeline.SPAWNER_CLASS, null), missingType)));
+
+        assertEquals(List.of(), timeline.onSpawnerUpdated(
+                1, List.of(new NeutralCampTimeline.Property("m_Type", 3))));
+    }
+
     @Test void healthChangeToZeroStagesOnlyHealthAndRecordsFirstDeath() {
         NeutralCampTimeline timeline = timelineWithCreep();
         List<NeutralCampTimeline.Emission> rows = timeline.onCreepUpdated(2, 20, 3.5,
