@@ -550,7 +550,8 @@ test("loader stores only retained rows and catalogs stored counts", async () => 
     assert.equal(stored.exported_records, "3");
     assert.deepEqual(JSON.parse(stored.record_counts as string), {
       records: 2, combatEvents: 0, blobs: 3, entityInstances: 2, entityEvents: 3,
-      propertyUpdates: 2, checkpoints: 3, heroPositions: 0, winProbability: 0, total: 15,
+      propertyUpdates: 2, checkpoints: 3, heroPositions: 0,
+      neutralCampFarmingActions: 0, winProbability: 0, total: 15,
     });
   } finally { connection.closeSync(); }
 });

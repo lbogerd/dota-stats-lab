@@ -24,7 +24,7 @@ import java.util.Map;
 
 /** Compact, analysis-oriented default extraction profile. */
 final class ReplayExporter {
-    static final String PROFILE = "match-analysis-v3";
+    static final String PROFILE = "match-analysis-v4";
     private static final Logger log = LoggerFactory.getLogger(ReplayExporter.class);
 
     private final String extractionId;
@@ -44,6 +44,7 @@ final class ReplayExporter {
     private final GoldTimeline goldTimeline = new GoldTimeline();
     private final HeroPositionTimeline heroPositionTimeline = new HeroPositionTimeline();
     private final WinProbabilityTimeline winProbabilityTimeline = new WinProbabilityTimeline();
+    private final NeutralCampTimeline neutralCampTimeline = new NeutralCampTimeline();
     private boolean gameEnded;
 
     ReplayExporter(String extractionId, NdjsonSet output, ExportConfig config, Instant startedAt) {
@@ -91,8 +92,11 @@ final class ReplayExporter {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("extractionId", extractionId);
         row.put("sequence", ++timelineSequence);
-        row.put("gameTime", event.hasTimestamp() ? event.getTimestamp() : null);
-        row.put("rawTime", event.hasTimestampRaw() ? event.getTimestampRaw() : null);
+        Float sourceTimestamp = event.hasTimestamp() ? event.getTimestamp() : null;
+        Float rawTimestamp = event.hasTimestampRaw() ? event.getTimestampRaw() : null;
+        CombatTimes combatTimes = combatTimes(gameClock.gameTime(), sourceTimestamp, rawTimestamp);
+        row.put("gameTime", combatTimes.gameTime());
+        row.put("rawTime", combatTimes.rawTime());
         row.put("eventType", event.hasType() ? event.getType().name() : null);
         row.put("targetName", event.hasTargetName() ? event.getTargetName() : null);
         row.put("targetSourceName", event.hasTargetSourceName() ? event.getTargetSourceName() : null);
@@ -266,6 +270,48 @@ final class ReplayExporter {
         heroPositionTimeline.onHeroDeleted(entity.getUid());
     }
 
+    @OnEntityCreated(classPattern = "CDOTA_NeutralSpawner")
+    public void onNeutralSpawnerCreated(Context context, Entity entity) throws IOException {
+        touch(context);
+        writeNeutral(neutralCampTimeline.onSpawnerCreated(
+                neutralEntityData(entity), entityProperties(entity)));
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTA_NeutralSpawner")
+    public void onNeutralSpawnerUpdated(Context context, Entity entity, FieldPath[] paths, int count)
+            throws IOException {
+        touch(context);
+        writeNeutral(neutralCampTimeline.onSpawnerUpdated(
+                entity.getUid(), entityProperties(entity, paths, count)));
+    }
+
+    @OnEntityDeleted(classPattern = "CDOTA_NeutralSpawner")
+    public void onNeutralSpawnerDeleted(Context context, Entity entity) throws IOException {
+        touch(context);
+        writeNeutral(neutralCampTimeline.onDeleted(entity.getUid(), demoTick, gameClock.gameTime()));
+    }
+
+    @OnEntityCreated(classPattern = "CDOTA_BaseNPC_Creep_Neutral")
+    public void onNeutralCreepCreated(Context context, Entity entity) throws IOException {
+        touch(context);
+        writeNeutral(neutralCampTimeline.onCreepCreated(
+                neutralEntityData(entity), entityProperties(entity)));
+    }
+
+    @OnEntityUpdated(classPattern = "CDOTA_BaseNPC_Creep_Neutral")
+    public void onNeutralCreepUpdated(Context context, Entity entity, FieldPath[] paths, int count)
+            throws IOException {
+        touch(context);
+        writeNeutral(neutralCampTimeline.onCreepUpdated(
+                entity.getUid(), demoTick, gameClock.gameTime(), entityProperties(entity, paths, count)));
+    }
+
+    @OnEntityDeleted(classPattern = "CDOTA_BaseNPC_Creep_Neutral")
+    public void onNeutralCreepDeleted(Context context, Entity entity) throws IOException {
+        touch(context);
+        writeNeutral(neutralCampTimeline.onDeleted(entity.getUid(), demoTick, gameClock.gameTime()));
+    }
+
     @OnTickEnd
     public void onTickEnd(Context context, boolean synthetic) throws IOException {
         touch(context);
@@ -395,6 +441,70 @@ final class ReplayExporter {
         return instanceId;
     }
 
+    private NeutralCampTimeline.EntityData neutralEntityData(Entity entity) {
+        long instanceId = ++entitySequence;
+        return new NeutralCampTimeline.EntityData(
+                entity.getUid(), instanceId, entity.getIndex(), entity.getSerial(), entity.getHandle(),
+                entity.getDtClass().getClassId(), entity.getDtClass().getDtName(), demoTick,
+                gameClock.gameTime());
+    }
+
+    private static java.util.List<NeutralCampTimeline.Property> entityProperties(Entity entity) {
+        if (entity.getState() == null) return java.util.List.of();
+        java.util.List<NeutralCampTimeline.Property> properties = new java.util.ArrayList<>();
+        var iterator = entity.getState().fieldPathIterator();
+        while (iterator.hasNext()) {
+            FieldPath fieldPath = iterator.next();
+            properties.add(new NeutralCampTimeline.Property(
+                    entity.getDtClass().getNameForFieldPath(fieldPath),
+                    entity.getPropertyForFieldPath(fieldPath)));
+        }
+        return properties;
+    }
+
+    private static java.util.List<NeutralCampTimeline.Property> entityProperties(
+            Entity entity, FieldPath[] paths, int count) {
+        java.util.List<NeutralCampTimeline.Property> properties = new java.util.ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            properties.add(new NeutralCampTimeline.Property(
+                    entity.getDtClass().getNameForFieldPath(paths[i]),
+                    entity.getPropertyForFieldPath(paths[i])));
+        }
+        return properties;
+    }
+
+    private void writeNeutral(java.util.List<NeutralCampTimeline.Emission> emissions)
+            throws IOException {
+        for (NeutralCampTimeline.Emission emission : emissions) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("extractionId", extractionId);
+            if (emission.logicalFile().equals("entityInstances")) {
+                row.put("sequence", Long.parseLong((String) emission.row().get("entityInstanceId")));
+            } else {
+                row.put("sequence", ++timelineSequence);
+            }
+            row.putAll(emission.row());
+            output.write(emission.logicalFile(), row);
+        }
+    }
+
+    static CombatTimes combatTimes(Double currentGameTime, Float sourceTimestamp,
+                                   Float rawTimestamp) {
+        Double gameTime = null;
+        if (currentGameTime != null && Double.isFinite(currentGameTime)) {
+            gameTime = currentGameTime;
+        }
+        Double rawTime = null;
+        if (rawTimestamp != null && Float.isFinite(rawTimestamp)) {
+            rawTime = Double.valueOf(rawTimestamp);
+        } else if (sourceTimestamp != null && Float.isFinite(sourceTimestamp)) {
+            rawTime = Double.valueOf(sourceTimestamp);
+        }
+        return new CombatTimes(gameTime, rawTime);
+    }
+
+    record CombatTimes(Double gameTime, Double rawTime) {}
+
     void finish() throws Exception {
         if (match == null) throw new IOException("replay does not contain CMsgDOTAMatch");
         if (metadata == null) throw new IOException("replay does not contain CDOTAMatchMetadataFile");
@@ -411,6 +521,10 @@ final class ReplayExporter {
         }
         log.info("profile={} exported 2 match documents, {} timeline events, {} hero positions, and {} win-probability samples",
                 PROFILE, timelineSequence, heroPositionSequence, winProbabilitySequence);
+        NeutralCampTimeline.Stats neutralStats = neutralCampTimeline.stats();
+        log.info("profile={} neutral_spawners={} valid_camp_creeps={} invalid_handle_neutral_creeps={} unresolved_non_invalid_links={}",
+                PROFILE, neutralStats.spawners(), neutralStats.stagedCampCreeps(),
+                neutralStats.invalidHandleNeutralCreeps(), neutralStats.unresolvedNonInvalidLinks());
     }
 
     private void writeRecord(long sequence, int tick, String category,

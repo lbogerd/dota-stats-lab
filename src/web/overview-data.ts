@@ -4,11 +4,13 @@ import type { MatchHeroDamageDoneTimeline } from "../server/damage-done-by-targe
 import type { MatchRollingGpm, RollingGpmWindowSeconds } from "../server/gpm.js";
 import type { MatchListItem, MatchOverview } from "../server/overview.js";
 import type { MatchHeroHeatmap } from "../server/hero-positions.js";
+import type { MatchNeutralCampFarming } from "../server/neutral-camp-farming.js";
 import type { MatchWinProbability } from "../server/win-probability.js";
 import {
   getMatchDamageDoneByTargetFn,
   getMatchDamageBySourceFn,
   getMatchHeroHeatmapFn,
+  getMatchNeutralCampFarmingFn,
   getMatchOverviewFn,
   getMatchRollingGpmFn,
   getMatchWinProbabilityFn,
@@ -20,6 +22,7 @@ export type {
   MatchHeroDamageTimeline,
   MatchHeroHeatmap,
   MatchListItem,
+  MatchNeutralCampFarming,
   MatchOverview,
   MatchRollingGpm,
   MatchWinProbability,
@@ -41,6 +44,7 @@ export const overviewQueryKeys = {
     playerSlot: number | null,
   ) => ["match-hero-heatmap", matchId, startMilliseconds, endMilliseconds, playerSlot] as const,
   winProbability: (matchId: string) => ["match-win-probability", matchId] as const,
+  neutralCampFarming: (matchId: string) => ["match-neutral-camp-farming", matchId] as const,
 };
 
 export const matchOverviewsQuery = () => queryOptions({
@@ -98,6 +102,13 @@ export const matchHeroHeatmapQuery = (
 export const matchWinProbabilityQuery = (matchId: string) => queryOptions({
   queryKey: overviewQueryKeys.winProbability(matchId),
   queryFn: (): Promise<MatchWinProbability> => getMatchWinProbabilityFn({ data: { matchId } }),
+});
+
+export const matchNeutralCampFarmingQuery = (matchId: string) => queryOptions({
+  queryKey: overviewQueryKeys.neutralCampFarming(matchId),
+  queryFn: (): Promise<MatchNeutralCampFarming> => getMatchNeutralCampFarmingFn({
+    data: { matchId },
+  }),
 });
 
 export function displayValue(value: string | number | null | undefined): string {

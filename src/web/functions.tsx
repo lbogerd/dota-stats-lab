@@ -22,6 +22,10 @@ import {
 import { getSqlCatalog } from "../server/sql-catalog.js";
 import { listHeroStats } from "../server/hero-stats.js";
 import { getMatchHeroHeatmap, heroHeatmapInputSchema } from "../server/hero-positions.js";
+import {
+  getMatchNeutralCampFarming,
+  neutralCampFarmingInputSchema,
+} from "../server/neutral-camp-farming.js";
 import { getMatchWinProbability, winProbabilityInputSchema } from "../server/win-probability.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
 
@@ -88,6 +92,10 @@ export const getMatchHeroHeatmapFn = createServerFn({ method: "GET" })
 export const getMatchWinProbabilityFn = createServerFn({ method: "GET" })
   .validator(winProbabilityInputSchema)
   .handler(({ data }) => getMatchWinProbability(data));
+
+export const getMatchNeutralCampFarmingFn = createServerFn({ method: "GET" })
+  .validator(neutralCampFarmingInputSchema)
+  .handler(({ data }) => getMatchNeutralCampFarming(data));
 
 export const listHeroStatsFn = createServerFn({ method: "GET" })
   .handler(() => listHeroStats());

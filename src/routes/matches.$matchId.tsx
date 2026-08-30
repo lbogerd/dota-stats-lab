@@ -8,6 +8,7 @@ import { DamageDoneByTargetSection } from "../web/damage-done-by-target-section"
 import { heroAsset, itemAsset, type DotaAsset } from "../web/dota-assets";
 import { GpmSection } from "../web/gpm-section";
 import { HeroHeatmapSection } from "../web/hero-heatmap-section";
+import { NeutralCampFarmingSection } from "../web/neutral-camp-farming-section";
 import { WinProbabilitySection } from "../web/win-probability-section";
 import {
   displayValue,
@@ -144,6 +145,8 @@ function MatchDetail() {
       durationSeconds={summary.durationSeconds}
       players={match.players}
     />
+
+    <NeutralCampFarmingSection matchId={matchId} players={match.players} />
 
     <div className="mt-6 space-y-6">
       <TeamRoster

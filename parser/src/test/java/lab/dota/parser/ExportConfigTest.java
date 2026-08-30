@@ -30,9 +30,10 @@ class ExportConfigTest {
         ExportConfig config = ExportConfig.fromEnvironment(Map.of());
         assertEquals(java.util.List.of("CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy",
                         "CDOTA_PlayerResource", "CDOTA_Unit_Hero_.*", "CDOTA_DataSpectator",
-                        "CDOTASpectatorGraphManagerProxy"),
+                        "CDOTASpectatorGraphManagerProxy", "CDOTA_NeutralSpawner",
+                        "CDOTA_BaseNPC_Creep_Neutral"),
                 config.asMap().get("entityClassPatterns"));
         assertEquals(100L, config.asMap().get("positionSampleIntervalMilliseconds"));
-        assertEquals("match-analysis-v3", config.asMap().get("profile"));
+        assertEquals("match-analysis-v4", config.asMap().get("profile"));
     }
 }

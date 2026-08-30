@@ -17,7 +17,7 @@ class ParserIdentityTest {
         assertEquals(identity.clarityForkRevision(), identity.parserVersion());
         assertEquals(identity.clarityForkRevision(), identity.manifestParser().get("version"));
         assertEquals(identity.clarityUpstreamRelease(), identity.manifestParser().get("upstreamRelease"));
-        assertEquals("2.1.0", identity.exportFormatVersion());
+        assertEquals("2.2.0", identity.exportFormatVersion());
         assertEquals(3, Main.MANIFEST_SCHEMA_VERSION);
     }
 }

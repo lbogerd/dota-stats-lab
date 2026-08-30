@@ -161,6 +161,24 @@ test("mobile user can open a real match overview", async ({ page }) => {
     await expect(page.getByText(/Selection:/)).toContainText(`${selectedHero}, 0:00.0–0:10.0`);
     await expect(page.getByText(/Showing [0-9,]+ position samples from 0:00.0 through 0:10.0/)).toBeVisible();
   }
+  await expect(page.getByRole("heading", { name: "Neutral camp farming" })).toBeVisible();
+  const farmingReady = page.getByTestId("neutral-camp-farming-ready");
+  const farmingEmpty = page.getByTestId("neutral-camp-farming-empty");
+  const farmingUnavailable = page.getByTestId("neutral-camp-farming-unavailable");
+  if (process.env.E2E_REQUIRE_NEUTRAL_CAMP_FARMING === "1") {
+    await expect(farmingReady.or(farmingEmpty)).toBeVisible();
+  } else {
+    await expect(farmingReady.or(farmingEmpty).or(farmingUnavailable)).toBeVisible();
+  }
+  if (await farmingReady.isVisible()) {
+    const farmingTableRegion = farmingReady.getByLabel(
+      "Neutral camp farming actions, scroll horizontally for all values",
+    );
+    await expect(farmingTableRegion.getByRole("table", { name: "Neutral camp farming actions" })).toBeVisible();
+    await farmingTableRegion.focus();
+    await expect(farmingTableRegion).toBeFocused();
+    await expect(farmingTableRegion).toHaveCSS("outline-style", "solid");
+  }
   await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
   await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();
 

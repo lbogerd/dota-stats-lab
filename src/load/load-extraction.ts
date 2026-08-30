@@ -10,6 +10,16 @@ import { jsonStringify } from "../lib/json.js";
 import { stagedFiles, validateManifest, type Manifest } from "./manifest.js";
 import { upsertMatchSelection } from "./match-selection.js";
 import {
+  deriveNeutralCampFarmingActions,
+  NEUTRAL_CAMP_FARMING_V1_CONFIG,
+  type NeutralCampFarmingAction,
+  type NeutralCampFarmingCreepFact,
+  type NeutralCampFarmingDamageEvent,
+  type NeutralCampFarmingHeroPosition,
+  type NeutralCampFarmingRosterPlayer,
+  type NeutralCampFarmingSpawnerFact,
+} from "./neutral-camp-farming.js";
+import {
   REJECTED_ENTITY_CLASSES,
   REJECTED_RECORD_TYPES,
   STORED_CHECKPOINT_KINDS,
@@ -65,12 +75,17 @@ export async function loadValidatedExtraction(validated: ValidatedExtraction): P
         const summaryStarted = performance.now();
         await materializeMatchAnalysis(database.connection, manifest);
         const heroPositions = await importHeroPositions(database.connection, extractionDir, manifest);
+        const neutralCampFarmingActions = await materializeNeutralCampFarming(
+          database.connection,
+          manifest,
+        );
         const winProbability = await importWinProbability(database.connection, extractionDir, manifest);
         const storedCounts = {
           ...rawCounts,
           heroPositions,
+          neutralCampFarmingActions,
           winProbability,
-          total: rawCounts.total + heroPositions + winProbability,
+          total: rawCounts.total + heroPositions + neutralCampFarmingActions + winProbability,
         };
         const importElapsed = Math.max(0, Math.round(performance.now() - loadStarted));
         logPhase(manifest.extractionId, "duckdb_write", importElapsed, storedCounts.total);
@@ -124,6 +139,7 @@ async function analysisRowCount(connection: DuckDBConnection, extractionId: stri
        + (SELECT count(*) FROM analysis.player_gold_events WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.hero_draft_events WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.hero_position_samples WHERE extraction_id = $id)
+       + (SELECT count(*) FROM analysis.neutral_camp_farming_actions WHERE extraction_id = $id)
        + (SELECT count(*) FROM analysis.win_probability_samples WHERE extraction_id = $id) AS rows`,
     { id: extractionId },
   );
@@ -623,6 +639,480 @@ async function importHeroPositions(
     throw new Error("Imported hero position count does not match the manifest");
   }
   return Number(count);
+}
+
+const PRE_CLOCK_CREATION_TIME_MS = Number.MIN_SAFE_INTEGER;
+const MAX_UNSIGNED_INTEGER = 4_294_967_295;
+const MAX_UNSIGNED_BIGINT = 18_446_744_073_709_551_615n;
+
+async function materializeNeutralCampFarming(
+  connection: DuckDBConnection,
+  manifest: Manifest,
+): Promise<number> {
+  if (manifest.profile !== "match-analysis-v4") return 0;
+
+  const extractionId = manifest.extractionId;
+  const rosterPlayers = await readNeutralCampRoster(connection, extractionId);
+  const damageEvents = await readNeutralCampDamageEvents(connection, extractionId);
+  const heroPositions = await readNeutralCampHeroPositions(connection, extractionId);
+  const campSpawners = await readNeutralCampSpawners(connection, extractionId);
+  const campCreeps = await readNeutralCampCreeps(connection, extractionId);
+  validateNeutralCampEntityLinks(campSpawners, campCreeps);
+  const actions = deriveNeutralCampFarmingActions({
+    extractionId,
+    rosterPlayers,
+    damageEvents,
+    heroPositions,
+    campSpawners,
+    campCreeps,
+  });
+  for (const action of actions) validateNeutralCampFarmingAction(action, extractionId);
+  await insertNeutralCampFarmingActions(connection, actions);
+  return actions.length;
+}
+
+async function readNeutralCampRoster(
+  connection: DuckDBConnection,
+  extractionId: string,
+): Promise<NeutralCampFarmingRosterPlayer[]> {
+  const result = await connection.runAndReadAll(
+    `SELECT player_slot, hero_id
+     FROM analysis.players
+     WHERE extraction_id = $id AND hero_id IS NOT NULL
+     ORDER BY player_slot`,
+    { id: extractionId },
+  );
+  return result.getRowObjects().map((raw) => {
+    const row = raw as Record<string, unknown>;
+    return {
+      playerSlot: requiredUnsignedInteger(row.player_slot, "roster player slot"),
+      heroId: requiredInteger(row.hero_id, "roster hero ID"),
+    };
+  });
+}
+
+async function readNeutralCampDamageEvents(
+  connection: DuckDBConnection,
+  extractionId: string,
+): Promise<NeutralCampFarmingDamageEvent[]> {
+  const result = await connection.runAndReadAll(
+    `SELECT sequence, game_time, event_type, target_name, attacker_name,
+            target_team, value, attacker_illusion
+     FROM raw.combat_events
+     WHERE extraction_id = $id
+       AND event_type = 'DOTA_COMBATLOG_DAMAGE'
+       AND value > 0
+       AND target_team = 4
+       AND starts_with(target_name, 'npc_dota_neutral_')
+       AND attacker_illusion = false
+       AND game_time IS NOT NULL
+       AND isfinite(game_time)
+     ORDER BY game_time, sequence`,
+    { id: extractionId },
+  );
+  return result.getRowObjects().map((raw) => {
+    const row = raw as Record<string, unknown>;
+    return {
+      sourceSequence: requiredUnsignedBigInt(row.sequence, "damage source sequence"),
+      gameTimeSeconds: requiredFiniteNumber(row.game_time, "damage game time"),
+      eventType: requiredString(row.event_type, "damage event type"),
+      targetName: nullableString(row.target_name, "damage target name"),
+      attackerName: nullableString(row.attacker_name, "damage attacker name"),
+      targetTeam: nullableInteger(row.target_team, "damage target team"),
+      damageValue: requiredFiniteNumber(row.value, "damage value"),
+      attackerIllusion: requiredBoolean(row.attacker_illusion, "damage attacker illusion"),
+    };
+  });
+}
+
+async function readNeutralCampHeroPositions(
+  connection: DuckDBConnection,
+  extractionId: string,
+): Promise<NeutralCampFarmingHeroPosition[]> {
+  const result = await connection.runAndReadAll(
+    `SELECT player_slot, game_time_milliseconds, world_x, world_y
+     FROM analysis.hero_position_samples
+     WHERE extraction_id = $id
+     ORDER BY player_slot, game_time_milliseconds`,
+    { id: extractionId },
+  );
+  return result.getRowObjects().map((raw) => {
+    const row = raw as Record<string, unknown>;
+    return {
+      playerSlot: requiredUnsignedInteger(row.player_slot, "position player slot"),
+      gameTimeMs: requiredUnsignedInteger(row.game_time_milliseconds, "position game time"),
+      worldX: requiredFiniteNumber(row.world_x, "position world X"),
+      worldY: requiredFiniteNumber(row.world_y, "position world Y"),
+    };
+  });
+}
+
+type NeutralEntityRow = Record<string, unknown>;
+
+async function readNeutralCampSpawners(
+  connection: DuckDBConnection,
+  extractionId: string,
+): Promise<NeutralCampFarmingSpawnerFact[]> {
+  const result = await connection.runAndReadAll(
+    `WITH creation_checkpoints AS MATERIALIZED (
+       SELECT
+         checkpoint.entity_instance_id,
+         checkpoint.sequence,
+         checkpoint.checkpoint_game_time,
+         max(try_cast(json_extract_string(property.value, '$.value') AS DOUBLE))
+           FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'worldX') AS world_x,
+         max(try_cast(json_extract_string(property.value, '$.value') AS DOUBLE))
+           FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'worldY') AS world_y,
+         max(try_cast(json_extract_string(property.value, '$.value') AS INTEGER))
+           FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'm_Type') AS camp_type
+       FROM raw.entity_checkpoints AS checkpoint,
+            json_each(checkpoint.properties) AS property
+       WHERE checkpoint.extraction_id = $id
+         AND checkpoint.checkpoint_kind = 'creation'
+       GROUP BY checkpoint.entity_instance_id, checkpoint.sequence, checkpoint.checkpoint_game_time
+       QUALIFY row_number() OVER (
+         PARTITION BY checkpoint.entity_instance_id ORDER BY checkpoint.sequence
+       ) = 1
+     ),
+     entity_events AS MATERIALIZED (
+       SELECT
+         entity_instance_id,
+         count(*) FILTER (WHERE event_type = 'create')::INTEGER AS create_event_count,
+         first(game_time ORDER BY sequence) FILTER (WHERE event_type = 'create') AS creation_game_time,
+         count(*) FILTER (WHERE event_type = 'delete')::INTEGER AS delete_event_count,
+         first(game_time ORDER BY sequence) FILTER (WHERE event_type = 'delete') AS deletion_game_time
+       FROM raw.entity_events
+       WHERE extraction_id = $id
+       GROUP BY entity_instance_id
+     )
+     SELECT
+       instance.entity_instance_id,
+       instance.handle,
+       checkpoint.camp_type,
+       checkpoint.world_x,
+       checkpoint.world_y,
+       event.create_event_count,
+       coalesce(event.creation_game_time, checkpoint.checkpoint_game_time, instance.game_time)
+         AS creation_game_time,
+       event.delete_event_count,
+       event.deletion_game_time
+     FROM raw.entity_instances AS instance
+     LEFT JOIN creation_checkpoints AS checkpoint USING (entity_instance_id)
+     LEFT JOIN entity_events AS event USING (entity_instance_id)
+     WHERE instance.extraction_id = $id
+       AND instance.class_name = 'CDOTA_NeutralSpawner'
+     ORDER BY
+       checkpoint.world_y,
+       checkpoint.world_x,
+       instance.handle,
+       instance.entity_instance_id`,
+    { id: extractionId },
+  );
+  return result.getRowObjects().map((raw) => spawnerFact(raw as NeutralEntityRow));
+}
+
+function spawnerFact(row: NeutralEntityRow): NeutralCampFarmingSpawnerFact {
+  requireSingleCreationEvent(row);
+  validateDeletionEvent(row);
+  return {
+    entityInstanceId: requiredUnsignedBigInt(row.entity_instance_id, "spawner entity instance ID"),
+    handle: requiredUnsignedBigInt(row.handle, "spawner handle"),
+    campType: requiredInteger(row.camp_type, "spawner camp type"),
+    worldX: requiredFiniteNumber(row.world_x, "spawner world X"),
+    worldY: requiredFiniteNumber(row.world_y, "spawner world Y"),
+    creationGameTimeMs: nullableGameTimeMs(row.creation_game_time) ?? PRE_CLOCK_CREATION_TIME_MS,
+    deletionGameTimeMs: nullableGameTimeMs(row.deletion_game_time),
+  };
+}
+
+type PendingCreepFact = NeutralCampFarmingCreepFact & {
+  health: number;
+  lifeState: number;
+  summoned: boolean;
+};
+
+async function readNeutralCampCreeps(
+  connection: DuckDBConnection,
+  extractionId: string,
+): Promise<NeutralCampFarmingCreepFact[]> {
+  const creepResult = await connection.runAndReadAll(
+      `WITH creation_checkpoints AS MATERIALIZED (
+         SELECT
+           checkpoint.entity_instance_id,
+           checkpoint.sequence,
+           checkpoint.checkpoint_game_time,
+           max(try_cast(json_extract_string(property.value, '$.value') AS UBIGINT))
+             FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'm_hNeutralSpawner') AS neutral_spawner_handle,
+           max(try_cast(json_extract_string(property.value, '$.value') AS INTEGER))
+             FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'm_iTeamNum') AS team_number,
+           max(try_cast(json_extract_string(property.value, '$.value') AS INTEGER))
+             FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'm_iHealth') AS health,
+           max(try_cast(json_extract_string(property.value, '$.value') AS INTEGER))
+             FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'm_lifeState') AS life_state,
+           max(try_cast(json_extract_string(property.value, '$.value') AS BOOLEAN))
+             FILTER (WHERE json_extract_string(property.value, '$.propertyPath') = 'm_bIsSummoned') AS summoned
+         FROM raw.entity_checkpoints AS checkpoint,
+              json_each(checkpoint.properties) AS property
+         WHERE checkpoint.extraction_id = $id
+           AND checkpoint.checkpoint_kind = 'creation'
+         GROUP BY checkpoint.entity_instance_id, checkpoint.sequence, checkpoint.checkpoint_game_time
+         QUALIFY row_number() OVER (
+           PARTITION BY checkpoint.entity_instance_id ORDER BY checkpoint.sequence
+         ) = 1
+       ),
+       entity_events AS MATERIALIZED (
+         SELECT
+           entity_instance_id,
+           count(*) FILTER (WHERE event_type = 'create')::INTEGER AS create_event_count,
+           first(game_time ORDER BY sequence) FILTER (WHERE event_type = 'create') AS creation_game_time,
+           count(*) FILTER (WHERE event_type = 'delete')::INTEGER AS delete_event_count,
+           first(game_time ORDER BY sequence) FILTER (WHERE event_type = 'delete') AS deletion_game_time
+         FROM raw.entity_events
+         WHERE extraction_id = $id
+         GROUP BY entity_instance_id
+       )
+       SELECT
+         instance.entity_instance_id,
+         instance.handle,
+         instance.class_name,
+         checkpoint.neutral_spawner_handle,
+         checkpoint.team_number,
+         checkpoint.health,
+         checkpoint.life_state,
+         checkpoint.summoned,
+         event.create_event_count,
+         coalesce(event.creation_game_time, checkpoint.checkpoint_game_time, instance.game_time)
+           AS creation_game_time,
+         event.delete_event_count,
+         event.deletion_game_time
+       FROM raw.entity_instances AS instance
+       LEFT JOIN creation_checkpoints AS checkpoint USING (entity_instance_id)
+       LEFT JOIN entity_events AS event USING (entity_instance_id)
+       WHERE instance.extraction_id = $id
+         AND instance.class_name = 'CDOTA_BaseNPC_Creep_Neutral'
+       ORDER BY checkpoint.neutral_spawner_handle,
+                coalesce(event.creation_game_time, checkpoint.checkpoint_game_time, instance.game_time),
+                instance.entity_instance_id`,
+      { id: extractionId },
+    );
+  const updateResult = await connection.runAndReadAll(
+      `SELECT update.entity_instance_id, update.sequence, update.property_path,
+              try_cast(json_extract_string(update.value, '$') AS INTEGER) AS value,
+              update.game_time
+       FROM raw.entity_property_updates AS update
+       JOIN raw.entity_instances AS instance
+         ON instance.extraction_id = update.extraction_id
+        AND instance.entity_instance_id = update.entity_instance_id
+       WHERE update.extraction_id = $id
+         AND instance.class_name = 'CDOTA_BaseNPC_Creep_Neutral'
+         AND update.property_path IN ('m_iHealth', 'm_lifeState')
+       ORDER BY update.entity_instance_id, update.sequence`,
+      { id: extractionId },
+    );
+
+  const creeps = new Map<bigint, PendingCreepFact>();
+  for (const raw of creepResult.getRowObjects()) {
+    const row = raw as NeutralEntityRow;
+    requireSingleCreationEvent(row);
+    validateDeletionEvent(row);
+    const entityInstanceId = requiredUnsignedBigInt(row.entity_instance_id, "creep entity instance ID");
+    const creationGameTimeMs = nullableGameTimeMs(row.creation_game_time);
+    if (creationGameTimeMs === null) throw new Error("Neutral creep creation time is unavailable");
+    creeps.set(entityInstanceId, {
+      entityInstanceId,
+      handle: requiredUnsignedBigInt(row.handle, "creep handle"),
+      className: requiredString(row.class_name, "creep class name"),
+      neutralSpawnerHandle: requiredUnsignedBigInt(row.neutral_spawner_handle, "creep spawner handle"),
+      teamNumber: requiredInteger(row.team_number, "creep team number"),
+      creationGameTimeMs,
+      deathGameTimeMs: null,
+      deletionGameTimeMs: nullableGameTimeMs(row.deletion_game_time),
+      health: requiredInteger(row.health, "creep health"),
+      lifeState: requiredInteger(row.life_state, "creep life state"),
+      summoned: requiredBoolean(row.summoned, "creep summoned flag"),
+    });
+  }
+
+  for (const raw of updateResult.getRowObjects()) {
+    const row = raw as Record<string, unknown>;
+    const creep = creeps.get(requiredUnsignedBigInt(row.entity_instance_id, "creep update entity instance ID"));
+    if (creep === undefined) throw new Error("Neutral creep update has no creation fact");
+    const propertyPath = requiredString(row.property_path, "creep update property path");
+    const value = requiredInteger(row.value, "creep update value");
+    const isDeath = propertyPath === "m_iHealth"
+      ? creep.health !== 0 && value === 0
+      : propertyPath === "m_lifeState" && creep.lifeState === 0 && value !== 0;
+    if (isDeath && creep.deathGameTimeMs === null) {
+      const deathGameTimeMs = nullableGameTimeMs(row.game_time);
+      if (deathGameTimeMs === null) throw new Error("Neutral creep death time is unavailable");
+      creep.deathGameTimeMs = deathGameTimeMs;
+    }
+    if (propertyPath === "m_iHealth") creep.health = value;
+    else if (propertyPath === "m_lifeState") creep.lifeState = value;
+    else throw new Error("Neutral creep update contains an unexpected property");
+  }
+
+  return [...creeps.values()].map(({ health: _health, lifeState: _lifeState, summoned: _summoned, ...creep }) => creep);
+}
+
+function validateNeutralCampEntityLinks(
+  spawners: readonly NeutralCampFarmingSpawnerFact[],
+  creeps: readonly NeutralCampFarmingCreepFact[],
+): void {
+  const spawnerCountByHandle = new Map<bigint, number>();
+  for (const spawner of spawners) {
+    spawnerCountByHandle.set(spawner.handle, (spawnerCountByHandle.get(spawner.handle) ?? 0) + 1);
+  }
+  for (const creep of creeps) {
+    if (creep.neutralSpawnerHandle === NEUTRAL_CAMP_FARMING_V1_CONFIG.invalidEntityHandle) {
+      throw new Error("Neutral creep has the invalid spawner handle");
+    }
+    if (spawnerCountByHandle.get(creep.neutralSpawnerHandle) !== 1) {
+      throw new Error("Neutral creep spawner handle does not resolve exactly once");
+    }
+  }
+}
+
+function requireSingleCreationEvent(row: NeutralEntityRow): void {
+  if (requiredInteger(row.create_event_count, "neutral entity creation event count") !== 1) {
+    throw new Error("Neutral entity must have exactly one creation event");
+  }
+}
+
+function validateDeletionEvent(row: NeutralEntityRow): void {
+  const count = requiredInteger(row.delete_event_count, "neutral entity deletion event count");
+  if (count < 0 || count > 1) throw new Error("Neutral entity has invalid deletion events");
+  if (count === 1 && nullableGameTimeMs(row.deletion_game_time) === null) {
+    throw new Error("Neutral entity deletion time is unavailable");
+  }
+}
+
+function validateNeutralCampFarmingAction(
+  action: NeutralCampFarmingAction,
+  extractionId: string,
+): void {
+  if (action.extractionId !== extractionId) throw new Error("Neutral camp action extraction ID mismatch");
+  if (action.definitionName !== NEUTRAL_CAMP_FARMING_V1_CONFIG.definitionName) {
+    throw new Error("Neutral camp action definition is invalid");
+  }
+  requiredUnsignedInteger(action.actionIndex, "neutral camp action index");
+  requiredUnsignedInteger(action.playerSlot, "neutral camp action player slot");
+  requiredUnsignedInteger(action.campId, "neutral camp action camp ID");
+  requiredUnsignedBigInt(action.spawnerHandle, "neutral camp action spawner handle");
+  requiredInteger(action.campType, "neutral camp action camp type");
+  requiredFiniteNumber(action.campWorldX, "neutral camp action world X");
+  requiredFiniteNumber(action.campWorldY, "neutral camp action world Y");
+  const start = requiredSafeInteger(action.startGameTimeMs, "neutral camp action start time");
+  const end = requiredSafeInteger(action.endGameTimeMs, "neutral camp action end time");
+  if (end < start) throw new Error("Neutral camp action ends before it starts");
+  if (action.result !== "cleared" && action.result !== "not_cleared") {
+    throw new Error("Neutral camp action result is invalid");
+  }
+  const damageCount = requiredUnsignedInteger(action.damageEventCount, "neutral camp action damage count");
+  if (damageCount === 0) throw new Error("Neutral camp action has no damage events");
+  const totalDamage = requiredSafeInteger(action.totalDamage, "neutral camp action total damage");
+  if (totalDamage <= 0) throw new Error("Neutral camp action has invalid total damage");
+  const initialCount = requiredUnsignedInteger(action.initialCreepCount, "neutral camp action initial creep count");
+  const deadCount = requiredUnsignedInteger(action.deadInitialCreepCount, "neutral camp action dead creep count");
+  if (initialCount === 0 || deadCount > initialCount) throw new Error("Neutral camp action has invalid creep counts");
+  if (action.result === "cleared" && deadCount !== initialCount) {
+    throw new Error("Cleared neutral camp action has live initial creeps");
+  }
+}
+
+async function insertNeutralCampFarmingActions(
+  connection: DuckDBConnection,
+  actions: readonly NeutralCampFarmingAction[],
+): Promise<void> {
+  const batchSize = 500;
+  for (let offset = 0; offset < actions.length; offset += batchSize) {
+    const batch = actions.slice(offset, offset + batchSize);
+    const parameters: Record<string, string | number | bigint> = {};
+    const values = batch.map((action, index) => {
+      const prefix = `a${index}_`;
+      Object.assign(parameters, {
+        [`${prefix}extraction`]: action.extractionId,
+        [`${prefix}index`]: action.actionIndex,
+        [`${prefix}definition`]: action.definitionName,
+        [`${prefix}player`]: action.playerSlot,
+        [`${prefix}camp`]: action.campId,
+        [`${prefix}handle`]: action.spawnerHandle,
+        [`${prefix}type`]: action.campType,
+        [`${prefix}x`]: action.campWorldX,
+        [`${prefix}y`]: action.campWorldY,
+        [`${prefix}start`]: BigInt(action.startGameTimeMs),
+        [`${prefix}end`]: BigInt(action.endGameTimeMs),
+        [`${prefix}result`]: action.result,
+        [`${prefix}damage_count`]: action.damageEventCount,
+        [`${prefix}damage`]: BigInt(action.totalDamage),
+        [`${prefix}creeps`]: action.initialCreepCount,
+        [`${prefix}dead_creeps`]: action.deadInitialCreepCount,
+      });
+      return `($${prefix}extraction, $${prefix}index, $${prefix}definition,
+        $${prefix}player, $${prefix}camp, $${prefix}handle, $${prefix}type,
+        $${prefix}x, $${prefix}y, $${prefix}start, $${prefix}end, $${prefix}result,
+        $${prefix}damage_count, $${prefix}damage, $${prefix}creeps, $${prefix}dead_creeps)`;
+    });
+    await connection.run(
+      `INSERT INTO analysis.neutral_camp_farming_actions VALUES ${values.join(",")}`,
+      parameters,
+    );
+  }
+}
+
+function nullableGameTimeMs(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  return requiredSafeInteger(
+    Math.round(requiredFiniteNumber(value, "neutral entity game time") * 1_000),
+    "neutral entity game time milliseconds",
+  );
+}
+
+function requiredFiniteNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${name} is invalid`);
+  return value;
+}
+
+function requiredSafeInteger(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${name} is invalid`);
+  return value;
+}
+
+function requiredInteger(value: unknown, name: string): number {
+  const integer = requiredSafeInteger(value, name);
+  if (integer < -2_147_483_648 || integer > 2_147_483_647) throw new Error(`${name} is out of range`);
+  return integer;
+}
+
+function requiredUnsignedInteger(value: unknown, name: string): number {
+  const integer = requiredSafeInteger(value, name);
+  if (integer < 0 || integer > MAX_UNSIGNED_INTEGER) throw new Error(`${name} is out of range`);
+  return integer;
+}
+
+function requiredUnsignedBigInt(value: unknown, name: string): bigint {
+  if (typeof value !== "bigint" || value < 0n || value > MAX_UNSIGNED_BIGINT) {
+    throw new Error(`${name} is invalid`);
+  }
+  return value;
+}
+
+function nullableInteger(value: unknown, name: string): number | null {
+  return value === null || value === undefined ? null : requiredInteger(value, name);
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value === "") throw new Error(`${name} is invalid`);
+  return value;
+}
+
+function nullableString(value: unknown, name: string): string | null {
+  return value === null || value === undefined ? null : requiredString(value, name);
+}
+
+function requiredBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${name} is invalid`);
+  return value;
 }
 
 async function importWinProbability(

@@ -1,10 +1,10 @@
 # Dota replay ingestion benchmark
 
-This report is a historical reference for export format 2.0.0. The current
-export format is 2.1.0. Run `./scripts/benchmark.sh` to measure the current
-format. Do not compare the old row counts or file sizes with a 2.1.0 extraction.
+This report is the current reference for export format 2.2.0 and the
+`match-analysis-v4` profile. It includes selective neutral-camp entity capture
+and typed `neutral-camp-farming-v1` derivation.
 
-Generated: 2026-08-26T11:41:01Z
+Generated: 2026-08-30T02:04:05Z
 
 ## Environment
 
@@ -12,26 +12,34 @@ Generated: 2026-08-26T11:41:01Z
 - Memory: 31.1 GiB
 - Operating system: Ubuntu 24.04.4 LTS; kernel Linux 6.8.0-136-generic x86_64 GNU/Linux
 - Docker: 29.6.1; Compose: 5.3.1
-- Git revision: c50d4151b8c4a7b55f0a6ba0739369c84ac29968
+- Git revision: 8163a1e565395e2212274ac54191fae67e2d5fbb (dirty feature branch)
 - Clarity fork: 11df6814e80b386a299aab3878ab34709d7e35f3
-- Export format: 2.0.0
+- Export format: 2.2.0
 - DuckDB Node API: 1.5.5-r.4
 
 ## Median measured results
 
 | Replay | Match | Runs | Duration | Replay | Preparation | Clarity | DuckDB writes | Summary | Complete | Peak RSS | Rows | Overview p95 | Ack |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| short | 8946228107 | 3 | 18:22 | 51.8 MiB | 0.10 s | 3.35 s | 0.94 s | 1.32 s | 7.44 s | 456.2 MiB | 156,600 | not measured | not measured |
-| normal | 8955653541 | 3 | 38:28 | 158.9 MiB | 0.27 s | 6.49 s | 1.38 s | 5.62 s | 16.57 s | 605.0 MiB | 356,018 | not measured | not measured |
-| large | 8946303764 | 3 | 55:27 | 170.7 MiB | 0.28 s | 7.69 s | 1.48 s | 11.87 s | 24.43 s | 682.9 MiB | 496,982 | not measured | not measured |
+| short | 8946228107 | 3 | 18:22 | 51.8 MiB | 0.14 s | 5.34 s | 1.30 s | 1.98 s | 10.76 s | 417.4 MiB | 169,847 | not measured | not measured |
+| normal | 8955653541 | 3 | 38:28 | 158.9 MiB | 0.33 s | 9.63 s | 1.95 s | 8.41 s | 23.95 s | 628.4 MiB | 408,836 | not measured | not measured |
+| large | 8946303764 | 3 | 55:27 | 170.7 MiB | 0.31 s | 10.00 s | 1.76 s | 14.38 s | 30.25 s | 716.4 MiB | 545,114 | not measured | not measured |
 
 ## Hero position and heat-map measurements
 
 | Replay | Match | Positions | Stored | Position output | Total output | Warehouse | Cold heat map | Warm heat map | API response | Response |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| short | 8946228107 | 103,542 | 103,542 | 22.6 MiB (25.0%) | 90.4 MiB | 21.0 MiB | 8.46 ms | 12.41 ms | 66.35 ms | 45.0 KiB |
-| normal | 8955653541 | 208,166 | 208,166 | 45.7 MiB (18.3%) | 249.7 MiB | 36.5 MiB | 9.99 ms | 10.19 ms | 74.59 ms | 48.0 KiB |
-| large | 8946303764 | 312,089 | 312,089 | 68.7 MiB (22.5%) | 305.4 MiB | 45.0 MiB | 10.45 ms | 10.32 ms | 80.97 ms | 75.4 KiB |
+| short | 8946228107 | 103,542 | 103,542 | 22.6 MiB (23.9%) | 94.4 MiB | 24.3 MiB | 12.69 ms | 8.75 ms | 78.20 ms | 45.0 KiB |
+| normal | 8955653541 | 208,166 | 208,166 | 45.7 MiB (17.3%) | 264.7 MiB | 42.8 MiB | 11.24 ms | 8.76 ms | 85.93 ms | 48.0 KiB |
+| large | 8946303764 | 312,089 | 312,089 | 68.7 MiB (21.5%) | 319.7 MiB | 51.8 MiB | 11.41 ms | 8.42 ms | 94.10 ms | 75.4 KiB |
+
+## Win-probability measurements
+
+| Replay | Match | Samples | Stored | Probability output | Total output |
+|---|---:|---:|---:|---:|---:|
+| short | 8946228107 | 0 | 0 | 0.0 MiB (0.0%) | 94.4 MiB |
+| normal | 8955653541 | 61 | 61 | 0.0 MiB (0.0%) | 264.7 MiB |
+| large | 8946303764 | 62 | 62 | 0.0 MiB (0.0%) | 319.7 MiB |
 
 The exported and stored position counts are equal for all measured runs. The
 64 by 64 heat-map cell totals are also equal to the selected sample totals.
@@ -64,9 +72,14 @@ confirmed that the page did not exceed a 390-pixel viewport.
 
 | Replay | Match | Gold events | Warehouse | Cold GPM | Warm GPM | 1s response | Max final GPM diff | Browser render p95 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| short | 8946228107 | 18,060 | 21.0 MiB | 53.07 ms | 37.68 ms | 418.1 KiB | 1.00 GPM | not measured |
-| normal | 8955653541 | 42,443 | 36.5 MiB | 95.18 ms | 81.53 ms | 916.1 KiB | 1.00 GPM | not measured |
-| large | 8946303764 | 64,451 | 45.0 MiB | 163.27 ms | 106.52 ms | 1338.0 KiB | 1.00 GPM | not measured |
+| short | 8946228107 | 18,060 | 24.3 MiB | 86.89 ms | 48.57 ms | 418.1 KiB | 1.00 GPM | not measured |
+| normal | 8955653541 | 42,443 | 42.8 MiB | 122.93 ms | 100.88 ms | 916.1 KiB | 1.00 GPM | not measured |
+| large | 8946303764 | 64,451 | 51.8 MiB | 171.58 ms | 109.66 ms | 1338.0 KiB | 1.00 GPM | not measured |
+
+The largest measured extraction remained below the current safety limits: the
+parser took 10.00 seconds of its 180-second limit, output was 319.7 MiB of its
+1 GiB limit, row count was 544,475 of 2,000,000, and peak RSS was 716.4 MiB
+inside the 4 GiB container limit.
 
 ## Measurement boundaries and limitations
 

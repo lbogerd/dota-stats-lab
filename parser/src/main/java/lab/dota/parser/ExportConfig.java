@@ -30,7 +30,8 @@ record ExportConfig(long maxInputBytes, long maxOutputBytes, long maxRecords,
         result.put("entityClassPatterns", java.util.List.of(
                 "CDOTA_DataRadiant", "CDOTA_DataDire", "CDOTAGamerulesProxy",
                 "CDOTA_PlayerResource", "CDOTA_Unit_Hero_.*", "CDOTA_DataSpectator",
-                "CDOTASpectatorGraphManagerProxy"));
+                "CDOTASpectatorGraphManagerProxy", "CDOTA_NeutralSpawner",
+                "CDOTA_BaseNPC_Creep_Neutral"));
         return result;
     }
 
