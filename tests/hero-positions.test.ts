@@ -122,6 +122,19 @@ test("hero heat map server returns ordered JSON-safe cells and totals", async ()
   assert.doesNotThrow(() => JSON.stringify(result));
 });
 
+test("hero heat map server can apply a team lens", async () => {
+  const radiant = await getMatchHeroHeatmap({
+    matchId: matchId.toString(), startMilliseconds: 0, endMilliseconds: 100,
+    playerSlot: null, teamId: 2,
+  });
+  const dire = await getMatchHeroHeatmap({
+    matchId: matchId.toString(), startMilliseconds: 0, endMilliseconds: 100,
+    playerSlot: null, teamId: 3,
+  });
+  assert.equal(radiant.sampleCount, 4);
+  assert.equal(dire.sampleCount, 0);
+});
+
 test("hero heat map server distinguishes an unavailable stream from an empty selection", async () => {
   const unavailable = await getMatchHeroHeatmap({
     matchId: noStreamMatchId.toString(), startMilliseconds: 0, endMilliseconds: 100, playerSlot: null,

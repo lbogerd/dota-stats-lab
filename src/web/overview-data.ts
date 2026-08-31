@@ -42,7 +42,8 @@ export const overviewQueryKeys = {
     startMilliseconds: number,
     endMilliseconds: number,
     playerSlot: number | null,
-  ) => ["match-hero-heatmap", matchId, startMilliseconds, endMilliseconds, playerSlot] as const,
+    teamId: 2 | 3 | null,
+  ) => ["match-hero-heatmap", matchId, startMilliseconds, endMilliseconds, playerSlot, teamId] as const,
   winProbability: (matchId: string) => ["match-win-probability", matchId] as const,
   neutralCampFarming: (matchId: string) => ["match-neutral-camp-farming", matchId] as const,
 };
@@ -87,15 +88,17 @@ export const matchHeroHeatmapQuery = (
   startMilliseconds: number,
   endMilliseconds: number,
   playerSlot: number | null,
+  teamId: 2 | 3 | null = null,
 ) => queryOptions({
   queryKey: overviewQueryKeys.heroHeatmap(
     matchId,
     startMilliseconds,
     endMilliseconds,
     playerSlot,
+    teamId,
   ),
   queryFn: (): Promise<MatchHeroHeatmap> => getMatchHeroHeatmapFn({
-    data: { matchId, startMilliseconds, endMilliseconds, playerSlot },
+    data: { matchId, startMilliseconds, endMilliseconds, playerSlot, teamId },
   }),
 });
 

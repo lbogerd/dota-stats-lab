@@ -4,7 +4,7 @@ import { listHeroStatsFn } from "./functions.js";
 
 export type { HeroStat, HeroStatistic, HeroStatsOverview };
 
-export const heroStatsQueryKey = ["hero-stats"] as const;
+const heroStatsQueryKey = ["hero-stats"] as const;
 
 export const heroStatsQuery = () => queryOptions({
   queryKey: heroStatsQueryKey,

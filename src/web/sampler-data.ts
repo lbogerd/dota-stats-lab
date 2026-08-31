@@ -2,7 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { createServerFn } from "@tanstack/react-start";
 import { getSamplerStatus } from "../server/sampler-monitoring.js";
 
-export const getSamplerStatusFn = createServerFn({ method: "GET" })
+const getSamplerStatusFn = createServerFn({ method: "GET" })
   .handler(() => getSamplerStatus());
 
 export const samplerStatusQuery = () => queryOptions({

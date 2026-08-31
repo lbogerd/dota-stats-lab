@@ -51,7 +51,7 @@ writerConnection.closeSync();
 writer.closeSync();
 
 const { BrowserSqlError, executeReadOnlySql, withReadOnlyWarehouse } = await import("../src/server/warehouse.js");
-const { getCatalogStats, getMatchDetail, listMatches } = await import("../src/server/catalog.js");
+const { getCatalogStats, listMatches } = await import("../src/server/catalog.js");
 
 test("browser SQL returns normalized JSON-safe values and enforces row limits", async () => {
   const result = await executeReadOnlySql(
@@ -154,24 +154,6 @@ test("catalog statistics are independent of list pagination and failed retries",
     storedMatches: "2",
     totalRecords: "33",
   });
-});
-
-test("catalog detail returns acquisitions, extractions, counts, and errors", async () => {
-  const detail = await getMatchDetail("8953222159");
-  assert.ok(detail);
-  assert.equal(detail.acquisitions.length, 1);
-  assert.deepEqual(detail.acquisitions[0]!.metadata, { region: "test" });
-  assert.equal(detail.extractions.length, 2);
-  assert.equal(detail.extractions[1]!.counts.total, "33");
-  assert.deepEqual(detail.errors, [{
-    source: "extraction",
-    id: "c".repeat(64),
-    occurredAt: "2026-08-21 10:02:00+00",
-    code: "parse_failed",
-    message: "Malformed replay",
-  }]);
-  assert.equal(await getMatchDetail("999"), null);
-  await assert.rejects(getMatchDetail("../bad"), /positive decimal integer/);
 });
 
 function isCode(code: string): (error: unknown) => boolean {

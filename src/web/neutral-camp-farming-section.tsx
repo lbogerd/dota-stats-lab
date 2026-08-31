@@ -3,16 +3,25 @@ import type { NeutralCampFarmingAction } from "../server/neutral-camp-farming.js
 import type { MatchOverviewPlayer } from "../server/overview.js";
 import { heroAsset } from "./dota-assets.js";
 import { matchNeutralCampFarmingQuery } from "./overview-data.js";
+import type { MatchLens } from "./match-lens.js";
+import { playersInLens } from "./match-lens.js";
 
-export function NeutralCampFarmingSection({ matchId, players }: {
+export function NeutralCampFarmingSection({ matchId, players, lens }: {
   matchId: string;
   players: MatchOverviewPlayer[];
+  lens?: MatchLens;
 }) {
   const query = useQuery(matchNeutralCampFarmingQuery(matchId));
   const playersBySlot = new Map(players.map((player) => [player.playerSlot, player]));
+  const allowedSlots = new Set((lens === undefined ? players : playersInLens(players, lens)).map((player) => player.playerSlot));
+  const actions = (query.data?.actions ?? []).filter((action) => lens === undefined || (
+    allowedSlots.has(action.playerSlot)
+    && action.startGameTimeMilliseconds >= lens.startSeconds * 1_000
+    && action.endGameTimeMilliseconds <= lens.endSeconds * 1_000
+  ));
 
   return <section
-    className="card mt-6 min-w-0 overflow-hidden p-5 sm:p-6"
+    className="card min-w-0 overflow-hidden p-5 sm:p-6"
     aria-labelledby="neutral-camp-farming-title"
   >
     <div>
@@ -49,17 +58,17 @@ export function NeutralCampFarmingSection({ matchId, players }: {
       Neutral camp farming is unavailable for this extraction. Re-extract the replay with the
       current parser to enable it.
     </ActionStatus>}
-    {query.isSuccess && query.data.available && query.data.actions.length === 0 && <ActionStatus
+    {query.isSuccess && query.data.available && actions.length === 0 && <ActionStatus
       testId="neutral-camp-farming-empty"
     >
-      This extraction has no neutral camp farming actions.
+      This extraction has no neutral camp farming actions inside the selected lens.
     </ActionStatus>}
-    {query.isSuccess && query.data.available && query.data.actions.length > 0 && <div
+    {query.isSuccess && query.data.available && actions.length > 0 && <div
       className="mt-5"
       data-testid="neutral-camp-farming-ready"
     >
       <p className="mb-3 text-xs text-[#526158]">
-        {query.data.actions.length.toLocaleString("en")} farming {query.data.actions.length === 1 ? "action" : "actions"}
+        {actions.length.toLocaleString("en")} farming {actions.length === 1 ? "action" : "actions"} in lens
       </p>
       <div
         className="overflow-x-auto rounded-xl border border-[#d8ddd5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#315f4a]"
@@ -82,7 +91,7 @@ export function NeutralCampFarmingSection({ matchId, players }: {
             </tr>
           </thead>
           <tbody className="divide-y divide-[#dde1d9]">
-            {query.data.actions.map((action) => <ActionRow
+            {actions.map((action) => <ActionRow
               key={action.actionIndex}
               action={action}
               player={playersBySlot.get(action.playerSlot)}

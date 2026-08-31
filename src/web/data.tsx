@@ -2,14 +2,13 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import type { JobStatus as ServerJobStatus } from "../jobs/job-files.js";
 import { isValidMatchId } from "../lib/match-id.js";
-import type { CatalogMatchDetail, CatalogMatchSummary, CatalogStats } from "../server/catalog.js";
+import type { CatalogMatchSummary, CatalogStats } from "../server/catalog.js";
 import type { SqlCatalog } from "../server/sql-catalog.js";
 import type { ReadOnlySqlResult } from "../server/warehouse.js";
 import type { SavedQuery } from "../server/saved-queries.js";
 import {
   deleteSavedQueryFn,
   getCatalogStatsFn,
-  getMatchDetailFn,
   getSqlCatalogFn,
   listJobsFn,
   listMatchesFn,
@@ -33,12 +32,8 @@ export interface Job {
   error?: string;
 }
 
-export type MatchSummary = CatalogMatchSummary;
-export type MatchDetail = CatalogMatchDetail;
-export type { CatalogStats };
-export type { SavedQuery };
+type MatchSummary = CatalogMatchSummary;
 export type SqlResult = ReadOnlySqlResult;
-export type { SqlCatalog };
 
 export const matchIdSchema = z.string().refine(isValidMatchId, "Enter a positive match ID in the DuckDB UBIGINT range.");
 export const queryNameSchema = z.string().min(1).max(48).regex(/^[a-z0-9_-]+$/, "Use lowercase letters, numbers, hyphens, or underscores.");
@@ -47,7 +42,6 @@ export const queryKeys = {
   jobs: ["jobs"] as const,
   matches: ["matches"] as const,
   catalogStats: ["catalog-stats"] as const,
-  match: (matchId: string) => ["matches", matchId] as const,
   queries: ["saved-queries"] as const,
   query: (name: string) => ["saved-queries", name] as const,
   sqlCatalog: ["sql-catalog"] as const,
@@ -65,21 +59,17 @@ function mapJob(status: ServerJobStatus): Job {
   };
 }
 
-export async function getJobs(): Promise<Job[]> {
+async function getJobs(): Promise<Job[]> {
   const jobs = await listJobsFn();
   return jobs.map(mapJob).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-export async function getMatches(): Promise<MatchSummary[]> {
+async function getMatches(): Promise<MatchSummary[]> {
   return listMatchesFn();
 }
 
-export async function getCatalogStatistics(): Promise<CatalogStats> {
+async function getCatalogStatistics(): Promise<CatalogStats> {
   return getCatalogStatsFn();
-}
-
-export async function getMatch(matchId: string): Promise<MatchDetail | null> {
-  return getMatchDetailFn({ data: { matchId } });
 }
 
 export async function ingestMatch(matchId: string): Promise<Job> {
@@ -87,11 +77,11 @@ export async function ingestMatch(matchId: string): Promise<Job> {
   return mapJob(await submitIngestionFn({ data: { matchId: parsed } }));
 }
 
-export async function getSavedQueries(): Promise<SavedQuery[]> {
+async function getSavedQueries(): Promise<SavedQuery[]> {
   return listSavedQueriesFn();
 }
 
-export async function getSavedQuery(name: string): Promise<SavedQuery | null> {
+async function getSavedQuery(name: string): Promise<SavedQuery | null> {
   return readSavedQueryFn({ data: { name } });
 }
 
@@ -111,7 +101,7 @@ export async function runSql(sql: string): Promise<SqlResult> {
   return runSqlFn({ data: { sql } });
 }
 
-export async function getSqlCatalog(): Promise<SqlCatalog> {
+async function getSqlCatalog(): Promise<SqlCatalog> {
   return getSqlCatalogFn();
 }
 
@@ -122,7 +112,6 @@ export const jobsQuery = () => queryOptions({
 });
 export const matchesQuery = () => queryOptions({ queryKey: queryKeys.matches, queryFn: getMatches });
 export const catalogStatsQuery = () => queryOptions({ queryKey: queryKeys.catalogStats, queryFn: getCatalogStatistics });
-export const matchQuery = (matchId: string) => queryOptions({ queryKey: queryKeys.match(matchId), queryFn: () => getMatch(matchId) });
 export const savedQueriesQuery = () => queryOptions({ queryKey: queryKeys.queries, queryFn: getSavedQueries });
 export const savedQueryQuery = (name: string) => queryOptions({ queryKey: queryKeys.query(name), queryFn: () => getSavedQuery(name) });
 export const sqlCatalogQuery = () => queryOptions({

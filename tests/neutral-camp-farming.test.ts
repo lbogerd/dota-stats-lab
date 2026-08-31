@@ -79,7 +79,7 @@ function facts(overrides: Partial<NeutralCampFarmingFacts> = {}): NeutralCampFar
   };
 }
 
-test("version 1 uses the plan's single named configuration", () => {
+test("version 1 uses one named configuration", () => {
   assert.deepEqual(NEUTRAL_CAMP_FARMING_V1_CONFIG, {
     definitionName: "neutral-camp-farming-v1",
     positionTimeToleranceMs: 250,

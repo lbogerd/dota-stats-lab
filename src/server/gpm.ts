@@ -1,10 +1,9 @@
 import { z } from "zod";
-import { ROLLING_GPM_WINDOWS, type RollingGpmWindowSeconds } from "../lib/gpm.js";
+import type { RollingGpmWindowSeconds } from "../lib/gpm.js";
 import { isValidMatchId, parseMatchId } from "../lib/match-id.js";
 import type { JsonValue } from "./warehouse.js";
 import { withReadOnlyWarehouse } from "./warehouse.js";
 
-export { ROLLING_GPM_WINDOWS } from "../lib/gpm.js";
 export type { RollingGpmWindowSeconds } from "../lib/gpm.js";
 
 const rollingGpmWindowSchema = z.union([

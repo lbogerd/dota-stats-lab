@@ -14,6 +14,7 @@ export const heroHeatmapInputSchema = z.object({
   startMilliseconds: sampleTimeSchema,
   endMilliseconds: sampleTimeSchema,
   playerSlot: z.number().int().min(0).max(255).nullable(),
+  teamId: z.union([z.literal(2), z.literal(3)]).nullable().optional(),
 }).strict();
 
 export type HeroHeatmapInput = z.infer<typeof heroHeatmapInputSchema>;
@@ -73,6 +74,7 @@ export async function getMatchHeroHeatmap(input: HeroHeatmapInput): Promise<Matc
       startMilliseconds: validated.startMilliseconds,
       endMilliseconds: validated.endMilliseconds,
       playerSlot: validated.playerSlot,
+      teamId: validated.teamId ?? null,
       gridSize: GRID_SIZE,
     });
     const rows = heatmapResult.getRowObjectsJson();
@@ -137,17 +139,41 @@ JOIN analysis.matches AS match
 WHERE latest.match_id = $matchId`;
 
 const HEATMAP_SQL = `
+WITH selected_samples AS MATERIALIZED (
+  SELECT sample.world_x, sample.world_y
+  FROM analysis.hero_position_samples AS sample
+  JOIN analysis.latest_successful_extractions AS latest
+    ON latest.extraction_id = sample.extraction_id
+  WHERE latest.match_id = $matchId
+    AND sample.game_time_milliseconds >= $startMilliseconds
+    AND sample.game_time_milliseconds <= $endMilliseconds
+    AND ($playerSlot IS NULL OR sample.player_slot = $playerSlot)
+    AND ($teamId IS NULL OR sample.team_id = $teamId)
+),
+normalized_samples AS (
+  SELECT
+    least($gridSize - 1, greatest(0, floor(
+      (sample.world_x - bounds.minimum_x)
+      / (bounds.maximum_x - bounds.minimum_x) * $gridSize
+    )::INTEGER))::INTEGER AS cell_x,
+    least($gridSize - 1, greatest(0, floor(
+      (bounds.maximum_y - sample.world_y)
+      / (bounds.maximum_y - bounds.minimum_y) * $gridSize
+    )::INTEGER))::INTEGER AS cell_y
+  FROM selected_samples AS sample
+  CROSS JOIN analysis.hero_map_world_bounds AS bounds
+  WHERE $gridSize > 0
+),
+grouped_cells AS (
+  SELECT cell_x, cell_y, count(*)::UBIGINT AS sample_count
+  FROM normalized_samples
+  GROUP BY cell_x, cell_y
+)
 SELECT
   cell_x,
   cell_y,
   sample_count,
   sum(sample_count) OVER () AS selected_sample_count,
   max(sample_count) OVER () AS maximum_cell_count
-FROM analysis.match_hero_heatmap(
-  $matchId,
-  $startMilliseconds,
-  $endMilliseconds,
-  $playerSlot,
-  $gridSize
-)
+FROM grouped_cells
 ORDER BY cell_y, cell_x`;

@@ -6,23 +6,17 @@ import { DamageBySourceChart } from "./damage-by-source-chart.js";
 import { heroAsset } from "./dota-assets.js";
 import { matchDamageBySourceQuery } from "./overview-data.js";
 import { formatDamageTime } from "./stacked-damage-interval-chart.js";
+import type { MatchLens } from "./match-lens.js";
+import { isTimeInLens } from "./match-lens.js";
 
-export function DamageBySourceSection({ matchId, players }: {
+export function DamageBySourceSection({ matchId, players, lens }: {
   matchId: string;
   players: MatchOverviewPlayer[];
+  lens?: MatchLens;
 }) {
   const [selectedPlayerSlot, setSelectedPlayerSlot] = useState<number | null>(
     players[0]?.playerSlot ?? null,
   );
-  const [selectedStartSeconds, setSelectedStartSeconds] = useState<number>();
-  const query = useQuery({
-    ...matchDamageBySourceQuery(matchId, selectedPlayerSlot ?? 0),
-    enabled: selectedPlayerSlot !== null,
-  });
-  const selectedInterval = query.data?.intervals.find(
-    (interval) => interval.startSeconds === selectedStartSeconds,
-  ) ?? query.data?.intervals.at(-1);
-
   return <section className="card mt-6 min-w-0 overflow-hidden p-5 sm:p-6" aria-labelledby="damage-by-source-title">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -37,7 +31,6 @@ export function DamageBySourceSection({ matchId, players }: {
           value={selectedPlayerSlot ?? ""}
           onChange={(event) => {
             setSelectedPlayerSlot(Number(event.target.value));
-            setSelectedStartSeconds(undefined);
           }}
           className="mt-1 h-11 w-full rounded-xl border border-[#cdd3ca] bg-white px-3 text-[#263a30] sm:w-auto"
         >
@@ -51,10 +44,30 @@ export function DamageBySourceSection({ matchId, players }: {
     {selectedPlayerSlot === null && <TimelineStatus kind="unavailable">
       Damage by source is unavailable because this match has no roster players.
     </TimelineStatus>}
-    {selectedPlayerSlot !== null && query.isPending && <TimelineStatus kind="loading">
+    {selectedPlayerSlot !== null && <DamageBySourcePanel key={selectedPlayerSlot} matchId={matchId} selectedPlayerSlot={selectedPlayerSlot} lens={lens} />}
+  </section>;
+}
+
+export function DamageBySourcePanel({ matchId, selectedPlayerSlot, lens }: {
+  matchId: string;
+  selectedPlayerSlot: number;
+  lens?: MatchLens;
+}) {
+  const [selectedStartSeconds, setSelectedStartSeconds] = useState<number>();
+  const query = useQuery(matchDamageBySourceQuery(matchId, selectedPlayerSlot));
+  const intervals = query.data === undefined ? [] : lens === undefined
+    ? query.data.intervals
+    : filterIntervals(query.data.intervals, lens);
+  const selectedInterval = intervals.find(
+    (interval) => interval.startSeconds === selectedStartSeconds,
+  ) ?? intervals.at(-1);
+  const totalDamage = intervals.reduce((sum, interval) => sum + interval.totalDamage, 0);
+
+  return <>
+    {query.isPending && <TimelineStatus kind="loading">
       Loading damage by source…
     </TimelineStatus>}
-    {selectedPlayerSlot !== null && query.isError && <div className="mt-5 rounded-xl border border-[#e1b8ad] bg-[#fff0ec] p-5 text-sm text-[#74362d]" role="alert">
+    {query.isError && <div className="mt-5 rounded-xl border border-[#e1b8ad] bg-[#fff0ec] p-5 text-sm text-[#74362d]" role="alert">
       <p className="font-semibold">Damage by source could not be loaded.</p>
       <p className="mt-1">{query.error instanceof Error ? query.error.message : "An unknown error occurred."}</p>
       <button type="button" onClick={() => void query.refetch()} className="mt-3 min-h-10 rounded-lg bg-[#74362d] px-3 font-semibold text-white">Try again</button>
@@ -62,27 +75,47 @@ export function DamageBySourceSection({ matchId, players }: {
     {query.isSuccess && !query.data.available && <TimelineStatus kind="unavailable">
       Damage by source is unavailable because this extraction has no usable combat-log timeline. Re-extract the replay with the current parser.
     </TimelineStatus>}
-    {query.isSuccess && query.data.available && query.data.intervals.length === 0 && <TimelineStatus kind="empty">
-      The selected hero has no recorded combat-log damage events.
+    {query.isSuccess && query.data.available && intervals.length === 0 && <TimelineStatus kind="empty">
+      The selected hero has no recorded combat-log damage events inside the lens.
     </TimelineStatus>}
-    {query.isSuccess && query.data.available && query.data.intervals.length > 0 && selectedInterval !== undefined && <div className="mt-5 min-w-0 space-y-5">
+    {query.isSuccess && query.data.available && intervals.length > 0 && selectedInterval !== undefined && <div className="mt-5 min-w-0 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <p className="text-[#405047]">
           Showing <strong>{query.data.target?.heroName ?? "selected hero"}</strong>.
         </p>
         <p className="rounded-lg bg-[#eef0e9] px-2.5 py-1 font-mono text-xs font-semibold text-[#526158]">
-          {formatDamage(query.data.totalDamage)} total combat-log damage
+          {formatDamage(totalDamage)} combat-log damage in lens
         </p>
       </div>
       <DamageBySourceChart
         key={selectedPlayerSlot}
-        intervals={query.data.intervals}
+        intervals={intervals}
         selectedStartSeconds={selectedInterval.startSeconds}
         onSelectInterval={setSelectedStartSeconds}
       />
       <IntervalDetail interval={selectedInterval} />
     </div>}
-  </section>;
+  </>;
+}
+
+function filterIntervals(intervals: DamageInterval[], lens: MatchLens): DamageInterval[] {
+  return intervals.flatMap((interval) => {
+    const sources = interval.sources.flatMap((source) => {
+      const via = source.via.flatMap((viaEntry) => {
+        const mechanisms = viaEntry.mechanisms.flatMap((mechanism) => {
+          const events = mechanism.events.filter((event) => isTimeInLens(event.gameTimeSeconds, lens));
+          if (events.length === 0) return [];
+          return [{ ...mechanism, events, damage: events.reduce((sum, event) => sum + event.damage, 0) }];
+        });
+        if (mechanisms.length === 0) return [];
+        return [{ ...viaEntry, mechanisms, damage: mechanisms.reduce((sum, mechanism) => sum + mechanism.damage, 0) }];
+      });
+      if (via.length === 0) return [];
+      return [{ ...source, via, damage: via.reduce((sum, viaEntry) => sum + viaEntry.damage, 0) }];
+    });
+    if (sources.length === 0) return [];
+    return [{ ...interval, sources, totalDamage: sources.reduce((sum, source) => sum + source.damage, 0) }];
+  });
 }
 
 function IntervalDetail({ interval }: { interval: DamageInterval }) {

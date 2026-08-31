@@ -77,6 +77,7 @@ export interface SamplerStatusOptions {
   stagingRoot?: string;
   warehousePath?: string;
   now?: Date;
+  diskUsage?: SamplerStatus["disk"];
 }
 
 interface ParsedHeartbeat {
@@ -114,7 +115,9 @@ export async function getSamplerStatus(options: SamplerStatusOptions = {}): Prom
   const stagingRoot = options.stagingRoot ?? process.env.STAGING_ROOT ?? "/work/staging";
   const warehousePath = options.warehousePath ?? process.env.WAREHOUSE_PATH ?? "/data/warehouse/dota.duckdb";
   const heartbeatPath = options.heartbeatPath ?? samplerHeartbeatPath(stagingRoot);
-  const diskPromise = readDiskUsage(stagingRoot, warehousePath);
+  const diskPromise = options.diskUsage === undefined
+    ? readDiskUsage(stagingRoot, warehousePath)
+    : Promise.resolve(options.diskUsage);
 
   let raw: unknown;
   try {

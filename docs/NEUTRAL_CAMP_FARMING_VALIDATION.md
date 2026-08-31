@@ -67,9 +67,9 @@ The largest result remained below the current 180-second parser, 1 GiB
 output, 2,000,000-row, and 4 GiB memory limits. The complete report is recorded
 in [BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md).
 
-## Evidence-backed plan changes
+## Evidence-backed design changes
 
-The initial probe changes are documented in the plan and parser notes. Clarity's
+The initial probe changes are documented here and in the parser notes. Clarity's
 source combat timestamp did not share the entity clock, so profile v4 records
 the pause-safe `GameClock` in `gameTime` and preserves the source timestamp in
 `rawTime`. A second replay showed `m_Type` can change during a match, so version

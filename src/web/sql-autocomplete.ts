@@ -10,7 +10,7 @@ export function sqlLanguageForCatalog(catalog?: SqlCatalog): ReturnType<typeof s
 }
 
 /** Convert the application catalog into CodeMirror's nested SQL completion model. */
-export function sqlCatalogToNamespace(catalog: SqlCatalog): SQLNamespace {
+function sqlCatalogToNamespace(catalog: SqlCatalog): SQLNamespace {
   const namespace: Record<string, SQLNamespace> = {};
 
   for (const schema of catalog.schemas) {

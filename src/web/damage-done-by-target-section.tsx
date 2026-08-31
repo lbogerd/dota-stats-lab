@@ -6,23 +6,17 @@ import { DamageDoneByTargetChart } from "./damage-done-by-target-chart.js";
 import { heroAsset } from "./dota-assets.js";
 import { matchDamageDoneByTargetQuery } from "./overview-data.js";
 import { formatDamageTime } from "./stacked-damage-interval-chart.js";
+import type { MatchLens } from "./match-lens.js";
+import { isTimeInLens } from "./match-lens.js";
 
-export function DamageDoneByTargetSection({ matchId, players }: {
+export function DamageDoneByTargetSection({ matchId, players, lens }: {
   matchId: string;
   players: MatchOverviewPlayer[];
+  lens?: MatchLens;
 }) {
   const [selectedPlayerSlot, setSelectedPlayerSlot] = useState<number | null>(
     players[0]?.playerSlot ?? null,
   );
-  const [selectedStartSeconds, setSelectedStartSeconds] = useState<number>();
-  const query = useQuery({
-    ...matchDamageDoneByTargetQuery(matchId, selectedPlayerSlot ?? 0),
-    enabled: selectedPlayerSlot !== null,
-  });
-  const selectedInterval = query.data?.intervals.find(
-    (interval) => interval.startSeconds === selectedStartSeconds,
-  ) ?? query.data?.intervals.at(-1);
-
   return <section className="card mt-6 min-w-0 overflow-hidden p-5 sm:p-6" aria-labelledby="damage-done-by-target-title">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -37,7 +31,6 @@ export function DamageDoneByTargetSection({ matchId, players }: {
           value={selectedPlayerSlot ?? ""}
           onChange={(event) => {
             setSelectedPlayerSlot(Number(event.target.value));
-            setSelectedStartSeconds(undefined);
           }}
           className="mt-1 h-11 w-full rounded-xl border border-[#cdd3ca] bg-white px-3 text-[#263a30] sm:w-auto"
         >
@@ -51,10 +44,30 @@ export function DamageDoneByTargetSection({ matchId, players }: {
     {selectedPlayerSlot === null && <TimelineStatus kind="unavailable">
       Damage done by target is unavailable because this match has no roster players.
     </TimelineStatus>}
-    {selectedPlayerSlot !== null && query.isPending && <TimelineStatus kind="loading">
+    {selectedPlayerSlot !== null && <DamageDoneByTargetPanel key={selectedPlayerSlot} matchId={matchId} selectedPlayerSlot={selectedPlayerSlot} lens={lens} />}
+  </section>;
+}
+
+export function DamageDoneByTargetPanel({ matchId, selectedPlayerSlot, lens }: {
+  matchId: string;
+  selectedPlayerSlot: number;
+  lens?: MatchLens;
+}) {
+  const [selectedStartSeconds, setSelectedStartSeconds] = useState<number>();
+  const query = useQuery(matchDamageDoneByTargetQuery(matchId, selectedPlayerSlot));
+  const intervals = query.data === undefined ? [] : lens === undefined
+    ? query.data.intervals
+    : filterIntervals(query.data.intervals, lens);
+  const selectedInterval = intervals.find(
+    (interval) => interval.startSeconds === selectedStartSeconds,
+  ) ?? intervals.at(-1);
+  const totalDamage = intervals.reduce((sum, interval) => sum + interval.totalDamage, 0);
+
+  return <>
+    {query.isPending && <TimelineStatus kind="loading">
       Loading damage done by target…
     </TimelineStatus>}
-    {selectedPlayerSlot !== null && query.isError && <div className="mt-5 rounded-xl border border-[#e1b8ad] bg-[#fff0ec] p-5 text-sm text-[#74362d]" role="alert">
+    {query.isError && <div className="mt-5 rounded-xl border border-[#e1b8ad] bg-[#fff0ec] p-5 text-sm text-[#74362d]" role="alert">
       <p className="font-semibold">Damage done by target could not be loaded.</p>
       <p className="mt-1">{query.error instanceof Error ? query.error.message : "An unknown error occurred."}</p>
       <button type="button" onClick={() => void query.refetch()} className="mt-3 min-h-10 rounded-lg bg-[#74362d] px-3 font-semibold text-white">Try again</button>
@@ -62,27 +75,47 @@ export function DamageDoneByTargetSection({ matchId, players }: {
     {query.isSuccess && !query.data.available && <TimelineStatus kind="unavailable">
       Damage done by target is unavailable because this extraction has no usable combat-log timeline or the selected hero cannot be resolved. Use an extraction with game-state markers and supported hero metadata.
     </TimelineStatus>}
-    {query.isSuccess && query.data.available && query.data.intervals.length === 0 && <TimelineStatus kind="empty">
-      The selected hero has no recorded combat-log damage done.
+    {query.isSuccess && query.data.available && intervals.length === 0 && <TimelineStatus kind="empty">
+      The selected hero has no recorded combat-log damage done inside the lens.
     </TimelineStatus>}
-    {query.isSuccess && query.data.available && query.data.intervals.length > 0 && selectedInterval !== undefined && <div className="mt-5 min-w-0 space-y-5">
+    {query.isSuccess && query.data.available && intervals.length > 0 && selectedInterval !== undefined && <div className="mt-5 min-w-0 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <p className="text-[#405047]">
           Showing <strong>{query.data.dealer?.heroName ?? "selected hero"}</strong>.
         </p>
         <p className="rounded-lg bg-[#eef0e9] px-2.5 py-1 font-mono text-xs font-semibold text-[#526158]">
-          {formatDamage(query.data.totalDamage)} total combat-log damage
+          {formatDamage(totalDamage)} combat-log damage in lens
         </p>
       </div>
       <DamageDoneByTargetChart
         key={selectedPlayerSlot}
-        intervals={query.data.intervals}
+        intervals={intervals}
         selectedStartSeconds={selectedInterval.startSeconds}
         onSelectInterval={setSelectedStartSeconds}
       />
       <IntervalDetail interval={selectedInterval} />
     </div>}
-  </section>;
+  </>;
+}
+
+function filterIntervals(intervals: DamageDoneInterval[], lens: MatchLens): DamageDoneInterval[] {
+  return intervals.flatMap((interval) => {
+    const targets = interval.targets.flatMap((target) => {
+      const via = target.via.flatMap((viaEntry) => {
+        const mechanisms = viaEntry.mechanisms.flatMap((mechanism) => {
+          const events = mechanism.events.filter((event) => isTimeInLens(event.gameTimeSeconds, lens));
+          if (events.length === 0) return [];
+          return [{ ...mechanism, events, damage: events.reduce((sum, event) => sum + event.damage, 0) }];
+        });
+        if (mechanisms.length === 0) return [];
+        return [{ ...viaEntry, mechanisms, damage: mechanisms.reduce((sum, mechanism) => sum + mechanism.damage, 0) }];
+      });
+      if (via.length === 0) return [];
+      return [{ ...target, via, damage: via.reduce((sum, viaEntry) => sum + viaEntry.damage, 0) }];
+    });
+    if (targets.length === 0) return [];
+    return [{ ...interval, targets, totalDamage: targets.reduce((sum, target) => sum + target.damage, 0) }];
+  });
 }
 
 function IntervalDetail({ interval }: { interval: DamageDoneInterval }) {

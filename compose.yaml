@@ -69,6 +69,8 @@ services:
     mem_limit: 4g
     cpus: 1.0
     pids_limit: 128
+    environment:
+      INGESTION_ENABLED: "${INGESTION_ENABLED:-false}"
     ports:
       - "127.0.0.1:3400:3000"
     depends_on:
@@ -99,6 +101,7 @@ services:
         target: /data/queries
 
   sampler:
+    profiles: ["ingestion"]
     build:
       context: .
       target: app
@@ -182,6 +185,7 @@ services:
           subpath: inbox
 
   parser-worker:
+    profiles: ["ingestion"]
     build:
       context: .
       target: parser-worker

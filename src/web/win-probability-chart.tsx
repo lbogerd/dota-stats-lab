@@ -21,11 +21,14 @@ interface ProbabilityRow {
 const RADIANT_COLOR = "#315f4a";
 const DIRE_COLOR = "#d45f4a";
 
-export function WinProbabilityChart({ points, radiantName, direName }: {
+export function WinProbabilityChart({ points, radiantName, direName, teamId = null }: {
   points: WinProbabilityChartPoint[];
   radiantName: string;
   direName: string;
+  teamId?: number | null;
 }) {
+  const showRadiant = teamId !== 3;
+  const showDire = teamId !== 2;
   const orderedPoints = useMemo(() => [...points]
     .filter((point) => Number.isFinite(point.gameTimeSeconds))
     .sort((left, right) => left.gameTimeSeconds - right.gameTimeSeconds), [points]);
@@ -53,7 +56,7 @@ export function WinProbabilityChart({ points, radiantName, direName }: {
         stroke: "#9ca69d",
         strokeDasharray: "5 4",
       }),
-      lineY(radiantRows, {
+      ...(showRadiant ? [lineY(radiantRows, {
         id: "radiant-win-probability",
         x: "gameTimeSeconds",
         y: "probability",
@@ -62,8 +65,8 @@ export function WinProbabilityChart({ points, radiantName, direName }: {
         stroke: RADIANT_COLOR,
         strokeWidth: 2.5,
         points: true,
-      }),
-      lineY(direRows, {
+      })] : []),
+      ...(showDire ? [lineY(direRows, {
         id: "dire-win-probability",
         x: "gameTimeSeconds",
         y: "probability",
@@ -73,7 +76,7 @@ export function WinProbabilityChart({ points, radiantName, direName }: {
         strokeWidth: 2.5,
         strokeDasharray: "7 4",
         points: true,
-      }),
+      })] : []),
       crosshair({ x: { label: false }, y: false }),
     ],
     scales: {
@@ -112,7 +115,7 @@ export function WinProbabilityChart({ points, radiantName, direName }: {
       grid: "#e2e5dd",
       background: "transparent",
     },
-  }), [direRows, maxTime, radiantRows]);
+  }), [direRows, maxTime, radiantRows, showDire, showRadiant]);
 
   const updateSelectedTime = (focusedPoints: readonly ChartPoint<ProbabilityRow, number, number>[]) => {
     const nextTime = focusedPoints[0]?.xValue;
@@ -122,7 +125,9 @@ export function WinProbabilityChart({ points, radiantName, direName }: {
 
   return <figure className="min-w-0 rounded-xl border border-[#e0e3da] bg-white p-3 sm:p-4">
     {activePoint !== null && <p className="font-mono text-xs text-[#405047]" aria-live="polite">
-      {formatProbabilityTime(activePoint.gameTimeSeconds)} · {radiantName} {formatProbability(activePoint.radiantProbability)} · {direName} {formatProbability(activePoint.direProbability)}
+      {formatProbabilityTime(activePoint.gameTimeSeconds)}
+      {showRadiant ? ` · ${radiantName} ${formatProbability(activePoint.radiantProbability)}` : ""}
+      {showDire ? ` · ${direName} ${formatProbability(activePoint.direProbability)}` : ""}
     </p>}
     <Chart
       definition={definition}
@@ -134,8 +139,8 @@ export function WinProbabilityChart({ points, radiantName, direName }: {
       onFocusGroupChange={updateSelectedTime}
     />
     <ul className="mt-2 flex min-w-0 flex-wrap gap-x-5 gap-y-1 text-xs text-[#526158]" aria-label="Win probability series">
-      <li className="min-w-0 truncate"><span className="mr-1.5 inline-block h-0 w-4 border-t-[3px] border-[#315f4a] align-middle" aria-hidden="true" />{radiantName} (Radiant)</li>
-      <li className="min-w-0 truncate"><span className="mr-1.5 inline-block h-2 w-2 bg-[#d45f4a] align-middle" aria-hidden="true" />{direName} (Dire)</li>
+      {showRadiant && <li className="min-w-0 truncate"><span className="mr-1.5 inline-block h-0 w-4 border-t-[3px] border-[#315f4a] align-middle" aria-hidden="true" />{radiantName} (Radiant)</li>}
+      {showDire && <li className="min-w-0 truncate"><span className="mr-1.5 inline-block h-2 w-2 bg-[#d45f4a] align-middle" aria-hidden="true" />{direName} (Dire)</li>}
     </ul>
   </figure>;
 }

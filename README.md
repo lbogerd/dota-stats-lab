@@ -23,7 +23,7 @@ Docker Engine with Compose v2 is the only required runtime. The wrapper uses the
 git submodule update --init --recursive
 ./dota init
 ./dota ingest 8955653541
-docker compose up --detach --build --wait web parser-worker sampler
+docker compose up --detach --build --wait web
 ```
 
 Open `http://127.0.0.1:3400` locally. The deployed, authenticated instance is at [dota.tainer.run](https://dota.tainer.run).
@@ -73,9 +73,24 @@ The first successful acquisition is cached with its size, SHA-256 checksum, sour
 
 The `sampler` service polls OpenDota's public-match feed and keeps only ranked matches (`lobby_type = 7`). It stores candidate match IDs and its cursor in a small DuckDB file under the staging volume. It does not store player names or account IDs.
 
+Automatic ingestion is currently disabled. The `sampler` and `parser-worker`
+services are behind the `ingestion` Compose profile, so ordinary starts,
+restarts, and deployments leave them off. Turn ingestion back on explicitly:
+
+```sh
+INGESTION_ENABLED=true docker compose --profile ingestion up --detach --build --wait web parser-worker sampler
+```
+
+To turn it off again without stopping the website:
+
+```sh
+docker compose stop sampler parser-worker
+docker compose up --detach --no-build --wait web
+```
+
 Each closed UTC hour targets 30 matches. The deterministic selection takes up to 24 matches with the highest known average rank tier, then 6 hash-selected control matches. If one group is short, it fills from the remaining matches without duplicates. OpenDota's public feed is smaller than the full Dota match stream, so 30 is a best-effort target and under-target hours are reported clearly.
 
-The default service is live, not a dry run. These settings can be changed in `compose.yaml` or through environment variables:
+When explicitly enabled, the sampler is live, not a dry run. These settings can be changed in `compose.yaml` or through environment variables:
 
 | Variable | Default | Purpose |
 |---|---:|---|

@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { isValidMatchId } from "../lib/match-id.js";
-import { getCatalogStats, getMatchDetail, listMatches } from "../server/catalog.js";
+import { getCatalogStats, listMatches } from "../server/catalog.js";
 import {
   damageBySourceInputSchema,
   getMatchHeroDamageTimeline,
@@ -11,7 +11,7 @@ import {
   getMatchHeroDamageDoneTimeline,
 } from "../server/damage-done-by-target.js";
 import { getMatchRollingGpm, rollingGpmInputSchema } from "../server/gpm.js";
-import { ensureIngestionCoordinator } from "../server/ingestion-runtime.js";
+import { enqueueIngestion, ensureIngestionCoordinator } from "../server/ingestion-runtime.js";
 import { getMatchOverview, listMatchOverviews } from "../server/overview.js";
 import {
   createSavedQueryStore,
@@ -62,10 +62,6 @@ export const listMatchesFn = createServerFn({ method: "GET" })
 export const getCatalogStatsFn = createServerFn({ method: "GET" })
   .handler(() => getCatalogStats());
 
-export const getMatchDetailFn = createServerFn({ method: "GET" })
-  .validator(matchIdInputSchema)
-  .handler(({ data }) => getMatchDetail(data.matchId));
-
 export const listMatchOverviewsFn = createServerFn({ method: "GET" })
   .handler(() => listMatchOverviews());
 
@@ -112,4 +108,4 @@ export const listJobsFn = createServerFn({ method: "GET" })
 
 export const submitIngestionFn = createServerFn({ method: "POST" })
   .validator(matchIdInputSchema)
-  .handler(({ data }) => ensureIngestionCoordinator().enqueue(BigInt(data.matchId)));
+  .handler(({ data }) => enqueueIngestion(BigInt(data.matchId)));

@@ -4,6 +4,8 @@ import type { MatchOverviewPlayer } from "../server/overview.js";
 import { heroAsset } from "./dota-assets.js";
 import { HeroHeatmap } from "./hero-heatmap.js";
 import { matchHeroHeatmapQuery } from "./overview-data.js";
+import type { MatchLens } from "./match-lens.js";
+import { lensPlayerSlot, lensTeamId } from "./match-lens.js";
 
 const TIME_STEP_MILLISECONDS = 100;
 const QUERY_DEBOUNCE_MILLISECONDS = 200;
@@ -46,10 +48,11 @@ export function parseHeatmapTime(value: string): number | null {
   return Number.isSafeInteger(milliseconds) && milliseconds % TIME_STEP_MILLISECONDS === 0 ? milliseconds : null;
 }
 
-export function HeroHeatmapSection({ matchId, durationSeconds, players }: {
+export function HeroHeatmapSection({ matchId, durationSeconds, players, lens }: {
   matchId: string;
   durationSeconds: number | null;
   players: MatchOverviewPlayer[];
+  lens?: MatchLens;
 }) {
   const durationMilliseconds = durationSeconds === null || !Number.isFinite(durationSeconds)
     ? 0
@@ -63,8 +66,12 @@ export function HeroHeatmapSection({ matchId, durationSeconds, players }: {
   const [playerSlot, setPlayerSlot] = useState<number | null>(null);
   const debouncedStart = useDebouncedValue(startMilliseconds, QUERY_DEBOUNCE_MILLISECONDS);
   const debouncedEnd = useDebouncedValue(endMilliseconds, QUERY_DEBOUNCE_MILLISECONDS);
+  const queryStart = lens === undefined ? debouncedStart : lens.startSeconds * 1_000;
+  const queryEnd = lens === undefined ? debouncedEnd : lens.endSeconds * 1_000;
+  const queryPlayerSlot = lens === undefined ? playerSlot : lensPlayerSlot(lens);
+  const queryTeamId = lens === undefined || queryPlayerSlot !== null ? null : lensTeamId(lens);
   const query = useQuery({
-    ...matchHeroHeatmapQuery(matchId, debouncedStart, debouncedEnd, playerSlot),
+    ...matchHeroHeatmapQuery(matchId, queryStart, queryEnd, queryPlayerSlot, queryTeamId),
     placeholderData: keepPreviousData,
   });
 
@@ -111,10 +118,12 @@ export function HeroHeatmapSection({ matchId, durationSeconds, players }: {
     }
   };
 
-  const selectedPlayer = playerSlot === null ? undefined : players.find((player) => player.playerSlot === playerSlot);
-  const selectedLabel = selectedPlayer === undefined ? "All heroes" : playerOptionLabel(selectedPlayer);
+  const selectedPlayer = queryPlayerSlot === null ? undefined : players.find((player) => player.playerSlot === queryPlayerSlot);
+  const selectedLabel = selectedPlayer !== undefined
+    ? playerOptionLabel(selectedPlayer)
+    : queryTeamId === 2 ? "Radiant heroes" : queryTeamId === 3 ? "Dire heroes" : "All heroes";
 
-  return <section className="card mt-6 min-w-0 overflow-hidden p-5 sm:p-6" aria-labelledby="hero-heatmap-title">
+  return <section className="card min-w-0 overflow-hidden p-5 sm:p-6" aria-labelledby="hero-heatmap-title">
     <div>
       <p className="eyebrow">Position analysis</p>
       <h2 id="hero-heatmap-title" className="mt-1 text-lg font-semibold">Hero location heat map</h2>
@@ -123,7 +132,7 @@ export function HeroHeatmapSection({ matchId, durationSeconds, players }: {
 
     <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)]">
       <div className="min-w-0 space-y-4">
-        <label className="block text-sm font-semibold text-[#405047]">
+        {lens === undefined ? <><label className="block text-sm font-semibold text-[#405047]">
           Hero
           <select
             aria-label="Heat map hero"
@@ -162,6 +171,9 @@ export function HeroHeatmapSection({ matchId, durationSeconds, players }: {
         <p className="rounded-xl bg-[#eef0e9] p-3 text-sm leading-6 text-[#405047]">
           Selection: <strong>{selectedLabel}</strong>, {formatHeatmapTime(startMilliseconds)}–{formatHeatmapTime(endMilliseconds)}.
         </p>
+        </> : <p className="rounded-xl bg-[#eef0e9] p-4 text-sm leading-6 text-[#405047]">
+          Showing <strong>{selectedLabel}</strong> from {formatHeatmapTime(queryStart)} through {formatHeatmapTime(queryEnd)}. Adjust the match lens above to update this map.
+        </p>}
       </div>
 
       <div className="min-w-0">

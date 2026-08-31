@@ -113,8 +113,18 @@ test("mobile user can open a real match overview", async ({ page }) => {
 
   await expect(page.locator("h1")).toHaveText(/^#[1-9][0-9]*$/);
   await expect(page.getByText("Winning team:", { exact: false })).toBeVisible();
-  await expect(page.getByText("DuckDB analysis", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Filter every section from one place" })).toBeVisible();
+  await expect(page.getByLabel("Match lens data scope")).toHaveValue("all");
+  await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
+  await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();
+
+  const timelinesLink = page.getByRole("link", { name: "Timelines" });
+  await timelinesLink.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await timelinesLink.click();
+  await expect(page).toHaveURL(/\/matches\/[1-9][0-9]*\/timelines$/);
   await expect(page.getByRole("heading", { name: "Valve win probability" })).toBeVisible();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   const probabilityReady = page.getByTestId("win-probability-ready");
   const probabilityUnavailable = page.getByTestId("win-probability-unavailable");
   if (process.env.E2E_REQUIRE_WIN_PROBABILITY === "1") {
@@ -141,6 +151,33 @@ test("mobile user can open a real match overview", async ({ page }) => {
     await gpmWindow.selectOption("1");
     await expect(page.getByText("Rolling GPM - last 1 seconds", { exact: true })).toBeVisible();
   }
+
+  const matchLensScope = page.getByLabel("Match lens data scope");
+  await matchLensScope.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await matchLensScope.selectOption("team-2");
+  await expect(matchLensScope).toHaveValue("team-2");
+  await expect(page).toHaveURL(/\/matches\/[1-9][0-9]*\/timelines\?.*scope=team-2/);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const endRange = page.locator("#match-lens-end");
+  const lensEnd = await endRange.evaluate((element: HTMLInputElement) => Math.min(10, Number(element.max)));
+  await endRange.fill(String(lensEnd));
+  await expect(page).toHaveURL(new RegExp(`/matches/[1-9][0-9]*/timelines\\?(?:scope=team-2.*end=${lensEnd}|end=${lensEnd}.*scope=team-2)`));
+
+  await page.getByLabel("Match details sections").getByRole("link", { name: "Overview" }).click();
+  await expect(page).toHaveURL(new RegExp(`/matches/[1-9][0-9]*/?\\?(?:scope=team-2.*end=${lensEnd}|end=${lensEnd}.*scope=team-2)`));
+  await expect(page.getByText("Radiant roster", { exact: true })).toBeVisible();
+  await expect(page.getByText("The final scoreboard is outside the selected time range.")).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Combat" }).click();
+  await expect(page).toHaveURL(/\/matches\/[1-9][0-9]*\/combat\?.*scope=team-2/);
+  await expect(page.getByRole("heading", { name: "Hero damage" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Damage taken" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Damage dealt" }).click();
+  await expect(page.getByRole("button", { name: "Damage dealt" })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("link", { name: "Map & farming" }).click();
+  await expect(page).toHaveURL(/\/matches\/[1-9][0-9]*\/map-farming\?.*scope=team-2/);
   await expect(page.getByRole("heading", { name: "Hero location heat map" })).toBeVisible();
   const heatmapReady = page.getByText(/Showing [0-9,]+ position samples from/);
   const heatmapUnavailable = page.getByText(/Hero position data is unavailable for this extraction/);
@@ -150,16 +187,7 @@ test("mobile user can open a real match overview", async ({ page }) => {
     await expect(heatmapReady.or(heatmapUnavailable)).toBeVisible();
   }
   if (await heatmapReady.isVisible()) {
-    const heroSelect = page.getByLabel("Heat map hero");
-    const heroOptions = heroSelect.locator("option");
-    expect(await heroOptions.count()).toBeGreaterThan(1);
-    await heroSelect.selectOption({ index: 1 });
-    const selectedHero = await heroSelect.locator("option:checked").textContent();
-    expect(selectedHero).toBeTruthy();
-    await page.locator("#end-time-text").fill("0:10.0");
-    await page.locator("#end-time-text").press("Enter");
-    await expect(page.getByText(/Selection:/)).toContainText(`${selectedHero}, 0:00.0–0:10.0`);
-    await expect(page.getByText(/Showing [0-9,]+ position samples from 0:00.0 through 0:10.0/)).toBeVisible();
+    await expect(page.getByText(/Showing Radiant heroes from/)).toBeVisible();
   }
   await expect(page.getByRole("heading", { name: "Neutral camp farming" })).toBeVisible();
   const farmingReady = page.getByTestId("neutral-camp-farming-ready");
@@ -179,9 +207,6 @@ test("mobile user can open a real match overview", async ({ page }) => {
     await expect(farmingTableRegion).toBeFocused();
     await expect(farmingTableRegion).toHaveCSS("outline-style", "solid");
   }
-  await expect(page.getByText(/ roster$/, { exact: false })).toHaveCount(2);
-  await expect(page.locator(':text-is("Final items"):visible').first()).toBeVisible();
-
   const viewportWidth = await page.evaluate(() => window.innerWidth);
   const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
   expect(bodyWidth).toBeLessThanOrEqual(viewportWidth);

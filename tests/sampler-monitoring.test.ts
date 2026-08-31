@@ -3,9 +3,17 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { getSamplerStatus } from "../src/server/sampler-monitoring.js";
+import { getSamplerStatus, type SamplerStatusOptions } from "../src/server/sampler-monitoring.js";
 
 const now = new Date("2026-08-26T12:00:00.000Z");
+const healthyDiskUsage = {
+  scratch: { totalBytes: 1_000, availableBytes: 900, usedPercent: 10 },
+  warehouseBytes: null,
+};
+
+function getTestSamplerStatus(options: SamplerStatusOptions) {
+  return getSamplerStatus({ ...options, diskUsage: healthyDiskUsage });
+}
 
 async function withHeartbeat(
   value: unknown,
@@ -32,7 +40,7 @@ test("reports a fresh sampler heartbeat as healthy", async () => {
     counters: { providerRequests: 4, candidatesSeen: 300, rankedCandidates: 250, knownRankCandidates: 225, selected: 30, enqueued: 30, failed: 0, cleanupFailed: 0 },
     queue: { queued: 2, oldestQueuedAt: "2026-08-26T11:57:00.000Z" },
   }, async (heartbeatPath, root) => {
-    const status = await getSamplerStatus({ heartbeatPath, stagingRoot: root, warehousePath: path.join(root, "warehouse.duckdb"), now });
+    const status = await getTestSamplerStatus({ heartbeatPath, stagingRoot: root, warehousePath: path.join(root, "warehouse.duckdb"), now });
     assert.equal(status.status, "healthy");
     assert.equal(status.heartbeatAgeSeconds, 30);
     assert.equal(status.providerAgeSeconds, 120);
@@ -53,7 +61,7 @@ test("reports stale heartbeat and a stalled queue as critical", async () => {
     counters: {},
     queue: { queued: 61, oldestQueuedAt: "2026-08-26T09:00:00.000Z" },
   }, async (heartbeatPath, root) => {
-    const status = await getSamplerStatus({ heartbeatPath, stagingRoot: root, now });
+    const status = await getTestSamplerStatus({ heartbeatPath, stagingRoot: root, now });
     assert.equal(status.status, "critical");
     assert.deepEqual(status.reasons.map((reason) => reason.code), ["heartbeat_stale", "provider_stale", "queue_large", "queue_stalled"]);
   });
@@ -66,7 +74,7 @@ test("warns when provider success is more than 15 minutes old", async () => {
     updatedAt: "2026-08-26T11:59:30.000Z",
     lastProviderSuccessAt: "2026-08-26T11:44:00.000Z",
   }, async (heartbeatPath, root) => {
-    const status = await getSamplerStatus({ heartbeatPath, stagingRoot: root, now });
+    const status = await getTestSamplerStatus({ heartbeatPath, stagingRoot: root, now });
     assert.equal(status.status, "warning");
     assert.equal(status.reasons[0]?.code, "provider_delayed");
   });
@@ -75,7 +83,7 @@ test("warns when provider success is more than 15 minutes old", async () => {
 test("treats a missing heartbeat as a safe starting state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dota-sampler-health-"));
   try {
-    const status = await getSamplerStatus({ heartbeatPath: path.join(root, "missing.json"), stagingRoot: root, now });
+    const status = await getTestSamplerStatus({ heartbeatPath: path.join(root, "missing.json"), stagingRoot: root, now });
     assert.equal(status.status, "starting");
     assert.equal(status.reasons[0]?.code, "heartbeat_missing");
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -83,7 +91,7 @@ test("treats a missing heartbeat as a safe starting state", async () => {
 
 test("rejects malformed heartbeats and omits raw failure data", async () => {
   await withHeartbeat({ updatedAt: "not-a-date", accountId: "private-account" }, async (heartbeatPath, root) => {
-    const status = await getSamplerStatus({ heartbeatPath, stagingRoot: root, now });
+    const status = await getTestSamplerStatus({ heartbeatPath, stagingRoot: root, now });
     assert.equal(status.status, "unavailable");
   });
 
@@ -93,10 +101,31 @@ test("rejects malformed heartbeats and omits raw failure data", async () => {
     lastProviderSuccessAt: "2026-08-26T11:59:00.000Z",
     recentFailures: [{ at: "2026-08-26T11:50:00.000Z", stage: "provider", code: "rate_limited", accountId: "private-account", message: "secret response" }],
   }, async (heartbeatPath, root) => {
-    const status = await getSamplerStatus({ heartbeatPath, stagingRoot: root, now });
+    const status = await getTestSamplerStatus({ heartbeatPath, stagingRoot: root, now });
     const publicJson = JSON.stringify(status);
     assert.equal(status.recentFailures[0]?.code, "rate_limited");
     assert.equal(publicJson.includes("private-account"), false);
     assert.equal(publicJson.includes("secret response"), false);
+  });
+});
+
+test("reports high scratch disk usage independently of heartbeat health", async () => {
+  await withHeartbeat({
+    state: "running",
+    startedAt: "2026-08-26T11:00:00.000Z",
+    updatedAt: "2026-08-26T11:59:30.000Z",
+    lastProviderSuccessAt: "2026-08-26T11:59:00.000Z",
+  }, async (heartbeatPath, root) => {
+    const status = await getSamplerStatus({
+      heartbeatPath,
+      stagingRoot: root,
+      now,
+      diskUsage: {
+        scratch: { totalBytes: 1_000, availableBytes: 250, usedPercent: 75 },
+        warehouseBytes: null,
+      },
+    });
+    assert.equal(status.status, "warning");
+    assert.deepEqual(status.reasons.map((reason) => reason.code), ["scratch_disk_high"]);
   });
 });

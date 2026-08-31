@@ -5,33 +5,45 @@ import type { MatchOverviewPlayer } from "../server/overview.js";
 import { heroAsset } from "./dota-assets.js";
 import { GpmChart, type GpmChartSeries } from "./gpm-chart.js";
 import { matchRollingGpmQuery } from "./overview-data.js";
+import type { MatchLens } from "./match-lens.js";
+import { lensTeamId } from "./match-lens.js";
 
-export function GpmSection({ matchId, players, radiantName, direName }: {
+export function GpmSection({ matchId, players, radiantName, direName, lens }: {
   matchId: string;
   players: MatchOverviewPlayer[];
   radiantName: string;
   direName: string;
+  lens?: MatchLens;
 }) {
   const [windowSeconds, setWindowSeconds] = useState<RollingGpmWindowSeconds>(60);
   const [selectedTeamId, setSelectedTeamId] = useState(2);
   const query = useQuery(matchRollingGpmQuery(matchId, windowSeconds));
   const teamNames = new Map([[2, radiantName], [3, direName]]);
-  const teamSeries: GpmChartSeries[] = (query.data?.teams ?? []).map((series) => ({
+  const scopedTeamId = lens === undefined ? null : lensTeamId(lens);
+  const filterPoints = <T extends { gameTimeSeconds: number }>(points: T[]): T[] => points.filter((point) => lens === undefined
+    || (point.gameTimeSeconds >= lens.startSeconds && point.gameTimeSeconds <= lens.endSeconds));
+  const teamSeries: GpmChartSeries[] = (query.data?.teams ?? [])
+    .filter((series) => lens === undefined || (lens.scope.kind !== "player" && (scopedTeamId === null || series.teamId === scopedTeamId)))
+    .map((series) => ({
     id: `team-${series.teamId}`,
     label: teamNames.get(series.teamId) ?? `Team ${series.teamId}`,
-    points: series.points,
+    points: filterPoints(series.points),
   }));
   const playerSeries: GpmChartSeries[] = (query.data?.players ?? [])
-    .filter((series) => series.teamId === selectedTeamId)
+    .filter((series) => lens === undefined
+      ? series.teamId === selectedTeamId
+      : lens.scope.kind === "team"
+        ? series.teamId === lens.scope.teamId
+        : lens.scope.kind === "player" && series.playerSlot === lens.scope.playerSlot)
     .map((series) => ({
       id: `player-${series.playerSlot}`,
       label: playerLabel(players.find((player) => player.playerSlot === series.playerSlot), series.playerSlot),
-      points: series.points,
+      points: filterPoints(series.points),
     }));
-  const hasData = teamSeries.length > 0 || (query.data?.players.length ?? 0) > 0;
+  const hasData = [...teamSeries, ...playerSeries].some((series) => series.points.length > 0);
   const selectedTeamName = teamNames.get(selectedTeamId) ?? `Team ${selectedTeamId}`;
 
-  return <section className="card mt-6 min-w-0 overflow-hidden p-5 sm:p-6" aria-labelledby="gpm-title">
+  return <section className="card min-w-0 overflow-hidden p-5 sm:p-6" aria-labelledby="gpm-title">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p className="eyebrow">Economy timeline</p>
@@ -64,11 +76,11 @@ export function GpmSection({ matchId, players, radiantName, direName }: {
       <p className="sr-only">
         Rolling GPM data is available for {query.data.teams.length} teams and {query.data.players.length} players at one-second intervals.
       </p>
-      <GpmChart
+      {teamSeries.length > 0 && <GpmChart
         title={`Rolling GPM - last ${windowSeconds} seconds`}
         series={teamSeries}
-      />
-      <div>
+      />}
+      {lens === undefined && <div>
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Player graph team">
           <span className="mr-1 text-xs font-semibold text-[#526158]">Player team</span>
           {[{ id: 2, name: radiantName }, { id: 3, name: direName }].map((team) => <button
@@ -82,7 +94,11 @@ export function GpmSection({ matchId, players, radiantName, direName }: {
         <div className="mt-3">
           <GpmChart title={`${selectedTeamName} player rolling GPM`} series={playerSeries} />
         </div>
-      </div>
+      </div>}
+      {lens !== undefined && playerSeries.length > 0 && <GpmChart
+        title={lens.scope.kind === "player" ? "Selected player rolling GPM" : "Players in selected team"}
+        series={playerSeries}
+      />}
     </div>}
   </section>;
 }
