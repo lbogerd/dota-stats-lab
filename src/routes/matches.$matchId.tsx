@@ -137,6 +137,7 @@ function MatchSectionNav({ matchId }: { matchId: string }) {
       <Link to="/matches/$matchId" params={{ matchId }} search={(previous) => previous} resetScroll={false} activeOptions={{ exact: true }} className={linkClass}>Overview</Link>
       <Link to="/matches/$matchId/timelines" params={{ matchId }} search={(previous) => previous} resetScroll={false} className={linkClass}>Timelines</Link>
       <Link to="/matches/$matchId/combat" params={{ matchId }} search={(previous) => previous} resetScroll={false} className={linkClass}>Combat</Link>
+      <Link to="/matches/$matchId/fights" params={{ matchId }} search={(previous) => previous} resetScroll={false} className={linkClass}>Fights</Link>
       <Link to="/matches/$matchId/map-farming" params={{ matchId }} search={(previous) => previous} resetScroll={false} className={linkClass}>Map &amp; farming</Link>
     </div>
   </nav>;
