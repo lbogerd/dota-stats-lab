@@ -89,6 +89,29 @@ The audit also supports retaining the credited-source-first kill rule, the
 metadata game-player-ID assist map, illusion exclusions, and controlled-unit
 damage attribution.
 
+## Five-match release refresh
+
+After the release checks, the same five recorded match IDs were re-ingested
+from the durable replay cache on 2026-09-01. The latest successful extraction
+for every match now uses export format `2.2.0`, manifest schema 3, and profile
+`match-analysis-v4`; the earlier successful extractions remain stored.
+
+| Match | Fights | Measured detail frames | Detail positions | Win-probability samples |
+|---|---:|---:|---|---:|
+| `8960991322` | 41 | 57 | available | 62 |
+| `8960882635` | 31 | 95 | available | 61 |
+| `8960762254` | 26 | 75 | available | 62 |
+| `8960655084` | 43 | 86 | available | 62 |
+| `8960577698` | 38 | 59 | available | 62 |
+
+The post-refresh audit found at least one valid hero death and exact 100 ms
+position samples in every match. The read-only measurement opened every fight
+list and one detail per match without loading positions into the list response.
+The mobile browser scenario also passed separately for all five matches with
+`E2E_REQUIRE_FIGHT_POSITIONS=1`; it exercised lens retention, detail playback,
+an exact 100 ms step, and the no-horizontal-overflow assertion. Win probability
+used Valve's `graph_history` source for all five matches.
+
 ## Reproducing the audit
 
 Run against a warehouse copy or while no writer owns the warehouse:
