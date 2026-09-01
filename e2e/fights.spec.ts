@@ -6,7 +6,10 @@ test("mobile user can filter and inspect death-based engagements", async ({ page
   await openMatch(page);
 
   const scope = page.getByLabel("Match lens data scope");
-  await scope.selectOption("team-2");
+  await expect.poll(async () => {
+    await scope.selectOption("team-2");
+    return page.url();
+  }).toMatch(/\/matches\/[1-9][0-9]*\?.*scope=team-2/);
   await page.getByRole("link", { name: "Fights" }).click();
   await expect(page).toHaveURL(/\/matches\/[1-9][0-9]*\/fights\?.*scope=team-2/);
   await expect(page.getByRole("heading", { name: "Fights" })).toBeVisible();

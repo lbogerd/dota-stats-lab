@@ -47,8 +47,7 @@ function MatchDetailLayout() {
   const lens = resolveMatchLens(search, match);
   const updateLens = (nextLens: typeof lens) => {
     void navigate({
-      to: ".",
-      unsafeRelative: "path",
+      to: window.location.pathname,
       search: matchLensSearch(nextLens),
       replace: true,
       resetScroll: false,
