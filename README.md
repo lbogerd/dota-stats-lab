@@ -1,6 +1,13 @@
 # Dota Replay Data Lab
 
-This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), combat-log damage timelines, hero position heat maps, and derived neutral-camp farming sessions. TanStack Charts renders every graph and heat map.
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), combat-log damage timelines, hero position heat maps, derived neutral-camp farming sessions, and estimated death-anchored engagements. TanStack Charts renders every graph and heat map.
+
+Each match has a **Fights** section that groups hero deaths into pickoffs,
+skirmishes, and team fights. Detection is an estimate with fixed
+`death-anchored-fights-v1` rules: fights without a hero death are omitted, and
+version one does not show spell casts or spell areas. Current extractions add
+exact-100 ms map playback to engagement detail; older combat-only extractions
+keep numerical results and show the map as unavailable.
 
 The default `match-analysis-v4` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
@@ -116,11 +123,17 @@ pnpm release:check && sudo docker compose build parser e2e && sudo docker compos
 
 # Reproducible real-replay benchmark
 ./scripts/benchmark.sh
+
+# Privacy-safe field audit for the five newest successful matches
+WAREHOUSE_PATH=/absolute/path/dota.duckdb pnpm audit:fights
+
+# Read-only list/detail timing after pnpm build:cli
+WAREHOUSE_PATH=/absolute/path/dota.duckdb BENCHMARK_MATCH_ID=MATCH_ID pnpm measure:fights
 ```
 
 Docker is the supported way to run the complete application. Host development needs Node.js 22 and pnpm 10. It also needs explicit host paths for replays, staging data, the warehouse, migrations, and saved queries.
 
-The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_WIN_PROBABILITY=1` to require the Valve-graph ready state, `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state, and `E2E_REQUIRE_NEUTRAL_CAMP_FARMING=1` to require the current neutral-farming stream (which may validly contain no actions). [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is the last recorded reference report; its environment section identifies the measured extraction format. [docs/NEUTRAL_CAMP_FARMING_VALIDATION.md](docs/NEUTRAL_CAMP_FARMING_VALIDATION.md) records the version-1 replay audit.
+The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_WIN_PROBABILITY=1` to require the Valve-graph ready state, `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state, `E2E_REQUIRE_FIGHT_POSITIONS=1` to require fight playback positions, and `E2E_REQUIRE_NEUTRAL_CAMP_FARMING=1` to require the current neutral-farming stream (which may validly contain no actions). [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is the last recorded reference report; its environment section identifies the measured extraction format. [docs/NEUTRAL_CAMP_FARMING_VALIDATION.md](docs/NEUTRAL_CAMP_FARMING_VALIDATION.md) records the neutral-farming replay audit, and [docs/FIGHTS_VALIDATION.md](docs/FIGHTS_VALIDATION.md) records the privacy-safe engagement field audit and measurement procedure.
 
 ## Architecture and ownership
 
