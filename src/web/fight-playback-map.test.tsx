@@ -52,6 +52,14 @@ describe("FightPlaybackMap", () => {
       { x: 5_000, y: 1_000 },
       { minimumX: -1_000, maximumX: 1_000, minimumY: -1_000, maximumY: 1_000 },
     )).toEqual({ x: 1_000, y: 200 });
+    expect(projectToBounds(
+      { x: -5_000, y: 0 },
+      { minimumX: -1_000, maximumX: 1_000, minimumY: -1_000, maximumY: 1_000 },
+    )).toEqual({ x: -1_000, y: 0 });
+    expect(projectToBounds(
+      { x: 5_000, y: 5_000 },
+      { minimumX: -1_000, maximumX: 1_000, minimumY: -1_000, maximumY: 1_000 },
+    )).toEqual({ x: 1_000, y: 1_000 });
   });
 });
 

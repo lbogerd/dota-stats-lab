@@ -20,19 +20,7 @@ export interface FightMapBounds {
 export interface FightMapView {
   center: FightPoint;
   bounds: FightMapBounds;
-  localPoints: FightPoint[];
-  remotePoints: FightPoint[];
 }
-
-export type FightMapProjection = {
-  kind: "local";
-  point: FightPoint;
-} | {
-  kind: "edge";
-  point: FightPoint;
-  /** SVG/world-space direction: 0 is right, 90 is up. */
-  directionDegrees: number;
-};
 
 /**
  * Builds a remote-resistant view around the densest local cluster of combat points.
@@ -49,45 +37,12 @@ export function deriveFightMapView(
   const seed = densestClusterSeed(validPoints);
   const radiusSquared = FIGHT_DETECTION_THRESHOLDS.localMapRadiusWorldUnits ** 2;
   const localPoints = validPoints.filter((point) => squaredDistance(point, seed) <= radiusSquared);
-  const localSet = new Set(localPoints);
-  const remotePoints = validPoints.filter((point) => !localSet.has(point));
   const center = {
     x: median(localPoints.map((point) => point.x)),
     y: median(localPoints.map((point) => point.y)),
   };
   const bounds = fitViewBounds(localPoints, center, worldBounds);
-  return { center, bounds, localPoints, remotePoints };
-}
-
-export function projectPointToFightMap(
-  point: FightPoint,
-  view: FightMapView | FightMapBounds,
-): FightMapProjection | null {
-  if (!isFinitePoint(point)) return null;
-  const bounds = "bounds" in view ? view.bounds : view;
-  assertValidBounds(bounds);
-  if (pointInBounds(point, bounds)) return { kind: "local", point: { ...point } };
-
-  const center = "center" in view ? view.center : {
-    x: (bounds.minimumX + bounds.maximumX) / 2,
-    y: (bounds.minimumY + bounds.maximumY) / 2,
-  };
-  const vectorX = point.x - center.x;
-  const vectorY = point.y - center.y;
-  const candidates: number[] = [];
-  if (vectorX > 0) candidates.push((bounds.maximumX - center.x) / vectorX);
-  if (vectorX < 0) candidates.push((bounds.minimumX - center.x) / vectorX);
-  if (vectorY > 0) candidates.push((bounds.maximumY - center.y) / vectorY);
-  if (vectorY < 0) candidates.push((bounds.minimumY - center.y) / vectorY);
-  const scale = Math.min(...candidates.filter((candidate) => candidate >= 0));
-  return {
-    kind: "edge",
-    point: {
-      x: clamp(center.x + vectorX * scale, bounds.minimumX, bounds.maximumX),
-      y: clamp(center.y + vectorY * scale, bounds.minimumY, bounds.maximumY),
-    },
-    directionDegrees: normalizeDegrees(Math.atan2(vectorY, vectorX) * 180 / Math.PI),
-  };
+  return { center, bounds };
 }
 
 export function pointInBounds(point: FightPoint, bounds: FightMapBounds): boolean {
@@ -211,10 +166,6 @@ function isFinitePoint(point: FightPoint): boolean {
 
 function squaredDistance(left: FightPoint, right: FightPoint): number {
   return (left.x - right.x) ** 2 + (left.y - right.y) ** 2;
-}
-
-function normalizeDegrees(degrees: number): number {
-  return (degrees + 360) % 360;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -216,7 +216,6 @@ interface NormalizedFight {
 
 interface LoadedFightData {
   state: MatchFightState;
-  roster: StoredRosterPlayer[];
   events: StoredCombatEvent[];
   fights: NormalizedFight[];
   records: FightListRecord[];
@@ -269,7 +268,7 @@ export async function getMatchFightDetail(
 async function loadFightData(connection: DuckDBConnection, matchId: bigint): Promise<LoadedFightData> {
   const state = await queryMatchState(connection, matchId);
   if (!state.hasCombat) {
-    return { state, roster: [], events: [], fights: [], records: [], metricData: null };
+    return { state, events: [], fights: [], records: [], metricData: null };
   }
 
   const roster = await queryRoster(connection, state.extractionId);
@@ -291,12 +290,12 @@ async function loadFightData(connection: DuckDBConnection, matchId: bigint): Pro
   const detected = detectFights({ roster: detectorRoster, combatEvents: events, deathPositions });
   const fights = clipOutcomesAndMap(detected);
   if (fights.length === 0) {
-    return { state, roster, events, fights, records: [], metricData: null };
+    return { state, events, fights, records: [], metricData: null };
   }
 
   const metricData = await queryMetricData(connection, state.extractionId);
   const records = fights.map((fight) => buildListRecord(fight, state, events, metricData));
-  return { state, roster, events, fights, records, metricData };
+  return { state, events, fights, records, metricData };
 }
 
 async function queryMatchState(connection: DuckDBConnection, matchId: bigint): Promise<MatchFightState> {

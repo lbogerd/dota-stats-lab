@@ -94,10 +94,6 @@ function FightDetailContent({ fight, players, teamNames }: {
       </p>
     </header>
 
-    {!fight.availability.combat && <FightState warning testId="fight-combat-unavailable">
-      Some combat result data is unavailable for this extraction. Available death and outcome data is still shown below.
-    </FightState>}
-
     {fight.positionState === "available" && fight.mapBounds !== null && <FightPlaybackMap fight={fight} mapBounds={fight.mapBounds} />}
     {fight.positionState === "available" && fight.mapBounds === null && <PositionState testId="fight-positions-empty">
       The position interval has no local map area, so an engagement map cannot be shown.

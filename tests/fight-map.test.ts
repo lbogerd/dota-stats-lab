@@ -4,7 +4,6 @@ import {
   deriveFightMapView,
   DOTA_MAP_WORLD_BOUNDS,
   pointInBounds,
-  projectPointToFightMap,
 } from "../src/server/fight-map.js";
 
 test("the default world bounds match the calibrated Dota map asset", () => {
@@ -24,8 +23,8 @@ test("a remote point does not pull the robust center away from the main combat",
     { x: 8_000, y: 8_000 },
   ]);
   assert.deepEqual(view?.center, { x: 0, y: 0 });
-  assert.equal(view?.localPoints.length, 3);
-  assert.deepEqual(view?.remotePoints, [{ x: 8_000, y: 8_000 }]);
+  assert.equal(view?.bounds.minimumX, -1_200);
+  assert.equal(view?.bounds.maximumX, 1_200);
 });
 
 test("a small combat uses the minimum view width and height", () => {
@@ -59,41 +58,8 @@ test("a view is shifted inside the full world map bounds", () => {
   assert.equal(view?.bounds.minimumY, 5_888);
 });
 
-test("a local position remains unprojected", () => {
-  const view = deriveFightMapView([{ x: 0, y: 0 }]);
-  assert.deepEqual(view && projectPointToFightMap({ x: 100, y: 200 }, view), {
-    kind: "local",
-    point: { x: 100, y: 200 },
-  });
-});
-
-test("a remote position projects along its direction to the nearest view edge", () => {
-  const view = deriveFightMapView([{ x: 0, y: 0 }]);
-  const projection = view && projectPointToFightMap({ x: 4_000, y: 2_000 }, view);
-  assert.equal(projection?.kind, "edge");
-  if (projection?.kind !== "edge") return;
-  assert.deepEqual(projection.point, { x: 1_200, y: 600 });
-  assert.ok(Math.abs(projection.directionDegrees - 26.565) < 0.001);
-});
-
-test("edge projection handles every direction and corners", () => {
-  const bounds = { minimumX: -10, maximumX: 10, minimumY: -10, maximumY: 10 };
-  assert.deepEqual(projectPointToFightMap({ x: -20, y: 0 }, bounds), {
-    kind: "edge", point: { x: -10, y: 0 }, directionDegrees: 180,
-  });
-  assert.deepEqual(projectPointToFightMap({ x: 20, y: 20 }, bounds), {
-    kind: "edge", point: { x: 10, y: 10 }, directionDegrees: 45,
-  });
-  assert.deepEqual(projectPointToFightMap({ x: 0, y: -20 }, bounds), {
-    kind: "edge", point: { x: 0, y: -10 }, directionDegrees: 270,
-  });
-});
-
 test("invalid points are omitted and no valid points means no view", () => {
   assert.equal(deriveFightMapView([{ x: Number.NaN, y: 0 }]), null);
-  assert.equal(projectPointToFightMap({ x: Number.POSITIVE_INFINITY, y: 0 }, {
-    minimumX: -10, maximumX: 10, minimumY: -10, maximumY: 10,
-  }), null);
 });
 
 test("bounds inclusion is exact at every edge", () => {

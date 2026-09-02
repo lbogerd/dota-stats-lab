@@ -228,7 +228,7 @@ function selectFightAnchorDeathsWithIndex(
   }).sort(compareAnchors);
 }
 
-export function groupAnchorDeaths(
+function groupAnchorDeaths(
   sortedOrUnsortedAnchors: readonly FightAnchorDeath[],
 ): FightAnchorDeath[][] {
   const anchors = [...sortedOrUnsortedAnchors].sort(compareAnchors);
@@ -256,7 +256,7 @@ export function groupAnchorDeaths(
   return [...groups.values()].sort((left, right) => compareAnchors(left[0], right[0]));
 }
 
-export function classifyFight(
+function classifyFight(
   radiantParticipantCount: number,
   direParticipantCount: number,
 ): FightType | null {

@@ -3,9 +3,9 @@ import type { FightDetail, FightListRecord, MatchFightDetail, MatchFights } from
 import type { MatchLens } from "./match-lens.js";
 import { getMatchFightDetailFn, getMatchFightsFn } from "./functions.js";
 
-export type { FightDetail, FightListRecord, MatchFightDetail, MatchFights };
+export type { FightDetail, FightListRecord };
 
-export const fightQueryKeys = {
+const fightQueryKeys = {
   list: (matchId: string) => ["match-fights", matchId] as const,
   detail: (matchId: string, fightId: string) => ["match-fights", matchId, fightId] as const,
 };
