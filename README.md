@@ -1,6 +1,13 @@
 # Dota Replay Data Lab
 
-This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), combat-log damage timelines, hero position heat maps, and derived neutral-camp farming sessions. TanStack Charts renders every graph and heat map.
+This project is a small, container-first lab for Dota 2 replay data. Clarity parses replay files. DuckDB stores the data and runs the calculations. A TanStack Start site shows matches, scoreboards, team totals, net-worth analysis, Valve win probability, rolling gold per minute (GPM), combat-log damage timelines, hero position heat maps, derived neutral-camp farming sessions, and estimated death-anchored engagements. TanStack Charts renders every graph and heat map.
+
+Each match has a **Fights** section that groups hero deaths into pickoffs,
+skirmishes, and team fights. Detection is an estimate with fixed
+`death-anchored-fights-v1` rules: fights without a hero death are omitted, and
+version one does not show spell casts or spell areas. Current extractions add
+exact-100 ms map playback to engagement detail; older combat-only extractions
+keep numerical results and show the map as unavailable.
 
 The default `match-analysis-v4` profile keeps the entire analytically useful match, not merely the fields currently drawn by the website:
 
@@ -111,16 +118,22 @@ The sampler writes an atomic heartbeat every 30 seconds. Open `/operations/sampl
 # Application and test images
 sudo docker compose build test parser web parser-worker e2e
 
-# All automated checks (catalog, web/CLI, parser, and browser tests)
-pnpm release:check && sudo docker compose build parser e2e && sudo docker compose run --rm --no-deps e2e
+# All automated checks and deployable images
+pnpm release:check && sudo docker compose build parser web parser-worker e2e && sudo docker compose run --rm --no-deps e2e
 
 # Reproducible real-replay benchmark
 ./scripts/benchmark.sh
+
+# Privacy-safe field audit for the five newest successful matches
+WAREHOUSE_PATH=/absolute/path/dota.duckdb pnpm audit:fights
+
+# Read-only list/detail timing after pnpm build:cli
+WAREHOUSE_PATH=/absolute/path/dota.duckdb BENCHMARK_MATCH_ID=MATCH_ID pnpm measure:fights
 ```
 
 Docker is the supported way to run the complete application. Host development needs Node.js 22 and pnpm 10. It also needs explicit host paths for replays, staging data, the warehouse, migrations, and saved queries.
 
-The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_WIN_PROBABILITY=1` to require the Valve-graph ready state, `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state, and `E2E_REQUIRE_NEUTRAL_CAMP_FARMING=1` to require the current neutral-farming stream (which may validly contain no actions). [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is the last recorded reference report; its environment section identifies the measured extraction format. [docs/NEUTRAL_CAMP_FARMING_VALIDATION.md](docs/NEUTRAL_CAMP_FARMING_VALIDATION.md) records the version-1 replay audit.
+The browser tests expect a healthy Compose web service. They also expect at least one stored match. Set `E2E_MATCH_ID` to target a known extraction. Set `E2E_REQUIRE_WIN_PROBABILITY=1` to require the Valve-graph ready state, `E2E_REQUIRE_HERO_POSITIONS=1` to require the heat-map ready state, `E2E_REQUIRE_FIGHT_POSITIONS=1` to require fight playback positions, and `E2E_REQUIRE_NEUTRAL_CAMP_FARMING=1` to require the current neutral-farming stream (which may validly contain no actions). [docs/BENCHMARK.md](docs/BENCHMARK.md) explains the benchmark. [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) is the last recorded reference report; its environment section identifies the measured extraction format. [docs/NEUTRAL_CAMP_FARMING_VALIDATION.md](docs/NEUTRAL_CAMP_FARMING_VALIDATION.md) records the neutral-farming replay audit, and [docs/FIGHTS_VALIDATION.md](docs/FIGHTS_VALIDATION.md) records the privacy-safe engagement field audit and measurement procedure.
 
 ## Architecture and ownership
 
@@ -224,7 +237,7 @@ Run these queries with `./dota sql`. The browser editor accepts one bounded, rea
 
 ## Website
 
-`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` shows the overview, rosters, final items, totals, final net-worth comparison, Valve win probability, rolling GPM, combat-log damage, a hero position heat map, and a typed neutral-camp farming table. The farming table reports the player, replay-local camp, times, result, direct damage, and initial-creep deaths; it does not infer controlled-unit damage, shared credit, stacks, or pulls. The two damage timelines show damage taken by source and damage done by target in fixed 30-second intervals. Their detail views preserve controlled-unit, illusion, mechanism, and event attribution. The probability chart uses the server values in the replay. It does not estimate values from net worth, kills, or other match data. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Exact probability, GPM, and damage values can be inspected with pointer input or the keyboard.
+`/matches` reads the latest successful extraction for every stored match. It shows the match ID, local date and time, duration, result, and both scores. `/matches/:matchId` has separate overview, timelines, combat, fights, and map-and-farming sections. The fights list applies the shared match lens to death-based engagements. Each fight detail shows team and player results, deaths, objectives, and position playback when 100 ms samples are available. The farming table reports the player, replay-local camp, times, result, direct damage, and initial-creep deaths; it does not infer controlled-unit damage, shared credit, stacks, or pulls. The two damage timelines show damage taken by source and damage done by target in fixed 30-second intervals. Their detail views preserve controlled-unit, illusion, mechanism, and event attribution. The probability chart uses the server values in the replay. It does not estimate values from net worth, kills, or other match data. The heat map accepts any start and end time on a 100 ms boundary. It can combine all ten heroes or show one roster hero. It uses living main heroes only. The GPM section offers fixed 1, 5, 10, 30, 60, and 300-second windows, compares both teams, and limits the player chart to one selected team. Exact probability, GPM, damage, and fight-playback values can be inspected with pointer input or the keyboard.
 
 Schema-version-1 and schema-version-2 extractions have no win-probability staging file. The match page shows an unavailable state for them. Re-extract a cached or archived replay with the current parser to add the server series; the application does not construct a replacement series when the replay is unavailable.
 
@@ -270,7 +283,7 @@ Package versions are pinned in `package.json` and `pnpm-lock.yaml`.
 
 ## Tests and real replay fixtures
 
-Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM and win-probability analysis, combat-log damage attribution, hero-position grids, neutral-camp farming derivation and transactional loading, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, query keys, TanStack chart interaction, damage timeline details, heat-map controls and rendering, neutral-farming ready/empty/unavailable/loading/error states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, server win-probability capture, game-clock capture, 100 ms hero-position sampling, and selective neutral-spawner/creep capture. Playwright covers the phone workflow and a real match overview, including its mobile probability, GPM, damage timeline, heat-map, and keyboard-accessible neutral-farming states.
+Node tests cover IDs, replay validation, downloads, cache behavior, manifests, locks, recovery, rollback, repeated ingestion, storage rules, migrations, rolling-GPM and win-probability analysis, combat-log damage attribution, hero-position grids, fight detection and server responses, neutral-camp farming derivation and transactional loading, item-catalog generation, server validation, SQL safety, and query files. Vitest covers Dota asset lookup, missing overview fields, display conversions, query keys, TanStack chart interaction, damage timeline details, heat-map controls and rendering, fight filtering and playback, neutral-farming ready/empty/unavailable/loading/error states, and team/window selection. The parser image compiles the Clarity fork and runs Java tests for targeted gold, server win-probability capture, game-clock capture, 100 ms hero-position sampling, and selective neutral-spawner/creep capture. Playwright covers the phone workflow, fight navigation and playback, and a real match overview, including its mobile probability, GPM, damage timeline, heat-map, and keyboard-accessible neutral-farming states.
 
 Large or unlicensed replays are never committed. To use your own parser fixture, keep it outside Git and run:
 

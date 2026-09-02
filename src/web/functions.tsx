@@ -28,6 +28,12 @@ import {
 } from "../server/neutral-camp-farming.js";
 import { getMatchWinProbability, winProbabilityInputSchema } from "../server/win-probability.js";
 import { executeReadOnlySql } from "../server/warehouse.js";
+import {
+  fightDetailInputSchema,
+  fightsListInputSchema,
+  getMatchFightDetail,
+  getMatchFights,
+} from "../server/fights.js";
 
 export const listSavedQueriesFn = createServerFn({ method: "GET" })
   .handler(() => createSavedQueryStore().list());
@@ -92,6 +98,14 @@ export const getMatchWinProbabilityFn = createServerFn({ method: "GET" })
 export const getMatchNeutralCampFarmingFn = createServerFn({ method: "GET" })
   .validator(neutralCampFarmingInputSchema)
   .handler(({ data }) => getMatchNeutralCampFarming(data));
+
+export const getMatchFightsFn = createServerFn({ method: "GET" })
+  .validator(fightsListInputSchema)
+  .handler(({ data }) => getMatchFights(data));
+
+export const getMatchFightDetailFn = createServerFn({ method: "GET" })
+  .validator(fightDetailInputSchema)
+  .handler(({ data }) => getMatchFightDetail(data));
 
 export const listHeroStatsFn = createServerFn({ method: "GET" })
   .handler(() => listHeroStats());

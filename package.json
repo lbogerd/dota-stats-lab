@@ -7,6 +7,8 @@
     "node": ">=22"
   },
   "scripts": {
+    "audit:fights": "node scripts/audit-fights.mjs",
+    "measure:fights": "node scripts/measure-fights.mjs",
     "catalog:items:update": "node scripts/update-dota-item-catalog.mjs",
     "catalog:items:verify": "node scripts/verify-dota-item-catalog.mjs",
     "release:check": "pnpm catalog:items:verify && pnpm check && pnpm build && pnpm test && pnpm test:web",

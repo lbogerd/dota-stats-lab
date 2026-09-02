@@ -24,8 +24,11 @@ import { Route as QueriesQueryNameRouteImport } from './routes/queries.$queryNam
 import { Route as ApiSamplerStatusRouteImport } from './routes/api.sampler.status'
 import { Route as MatchesMatchIdIndexRouteImport } from './routes/matches.$matchId.index'
 import { Route as MatchesMatchIdCombatRouteImport } from './routes/matches.$matchId.combat'
+import { Route as MatchesMatchIdFightsRouteImport } from './routes/matches.$matchId.fights'
 import { Route as MatchesMatchIdMapFarmingRouteImport } from './routes/matches.$matchId.map-farming'
 import { Route as MatchesMatchIdTimelinesRouteImport } from './routes/matches.$matchId.timelines'
+import { Route as MatchesMatchIdFightsIndexRouteImport } from './routes/matches.$matchId.fights.index'
+import { Route as MatchesMatchIdFightsFightIdRouteImport } from './routes/matches.$matchId.fights.$fightId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -102,6 +105,11 @@ const MatchesMatchIdCombatRoute = MatchesMatchIdCombatRouteImport.update({
   path: '/combat',
   getParentRoute: () => MatchesMatchIdRoute,
 } as any)
+const MatchesMatchIdFightsRoute = MatchesMatchIdFightsRouteImport.update({
+  id: '/fights',
+  path: '/fights',
+  getParentRoute: () => MatchesMatchIdRoute,
+} as any)
 const MatchesMatchIdMapFarmingRoute =
   MatchesMatchIdMapFarmingRouteImport.update({
     id: '/map-farming',
@@ -113,6 +121,18 @@ const MatchesMatchIdTimelinesRoute = MatchesMatchIdTimelinesRouteImport.update({
   path: '/timelines',
   getParentRoute: () => MatchesMatchIdRoute,
 } as any)
+const MatchesMatchIdFightsIndexRoute =
+  MatchesMatchIdFightsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => MatchesMatchIdFightsRoute,
+  } as any)
+const MatchesMatchIdFightsFightIdRoute =
+  MatchesMatchIdFightsFightIdRouteImport.update({
+    id: '/$fightId',
+    path: '/$fightId',
+    getParentRoute: () => MatchesMatchIdFightsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -129,9 +149,12 @@ export interface FileRoutesByFullPath {
   '/queries/': typeof QueriesIndexRoute
   '/api/sampler/status': typeof ApiSamplerStatusRoute
   '/matches/$matchId/combat': typeof MatchesMatchIdCombatRoute
+  '/matches/$matchId/fights': typeof MatchesMatchIdFightsRouteWithChildren
   '/matches/$matchId/map-farming': typeof MatchesMatchIdMapFarmingRoute
   '/matches/$matchId/timelines': typeof MatchesMatchIdTimelinesRoute
   '/matches/$matchId/': typeof MatchesMatchIdIndexRoute
+  '/matches/$matchId/fights/$fightId': typeof MatchesMatchIdFightsFightIdRoute
+  '/matches/$matchId/fights/': typeof MatchesMatchIdFightsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -148,6 +171,8 @@ export interface FileRoutesByTo {
   '/matches/$matchId/map-farming': typeof MatchesMatchIdMapFarmingRoute
   '/matches/$matchId/timelines': typeof MatchesMatchIdTimelinesRoute
   '/matches/$matchId': typeof MatchesMatchIdIndexRoute
+  '/matches/$matchId/fights/$fightId': typeof MatchesMatchIdFightsFightIdRoute
+  '/matches/$matchId/fights': typeof MatchesMatchIdFightsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -165,9 +190,12 @@ export interface FileRoutesById {
   '/queries/': typeof QueriesIndexRoute
   '/api/sampler/status': typeof ApiSamplerStatusRoute
   '/matches/$matchId/combat': typeof MatchesMatchIdCombatRoute
+  '/matches/$matchId/fights': typeof MatchesMatchIdFightsRouteWithChildren
   '/matches/$matchId/map-farming': typeof MatchesMatchIdMapFarmingRoute
   '/matches/$matchId/timelines': typeof MatchesMatchIdTimelinesRoute
   '/matches/$matchId/': typeof MatchesMatchIdIndexRoute
+  '/matches/$matchId/fights/$fightId': typeof MatchesMatchIdFightsFightIdRoute
+  '/matches/$matchId/fights/': typeof MatchesMatchIdFightsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -186,9 +214,12 @@ export interface FileRouteTypes {
     | '/queries/'
     | '/api/sampler/status'
     | '/matches/$matchId/combat'
+    | '/matches/$matchId/fights'
     | '/matches/$matchId/map-farming'
     | '/matches/$matchId/timelines'
     | '/matches/$matchId/'
+    | '/matches/$matchId/fights/$fightId'
+    | '/matches/$matchId/fights/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -205,6 +236,8 @@ export interface FileRouteTypes {
     | '/matches/$matchId/map-farming'
     | '/matches/$matchId/timelines'
     | '/matches/$matchId'
+    | '/matches/$matchId/fights/$fightId'
+    | '/matches/$matchId/fights'
   id:
     | '__root__'
     | '/'
@@ -221,9 +254,12 @@ export interface FileRouteTypes {
     | '/queries/'
     | '/api/sampler/status'
     | '/matches/$matchId/combat'
+    | '/matches/$matchId/fights'
     | '/matches/$matchId/map-farming'
     | '/matches/$matchId/timelines'
     | '/matches/$matchId/'
+    | '/matches/$matchId/fights/$fightId'
+    | '/matches/$matchId/fights/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -344,6 +380,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MatchesMatchIdCombatRouteImport
       parentRoute: typeof MatchesMatchIdRoute
     }
+    '/matches/$matchId/fights': {
+      id: '/matches/$matchId/fights'
+      path: '/fights'
+      fullPath: '/matches/$matchId/fights'
+      preLoaderRoute: typeof MatchesMatchIdFightsRouteImport
+      parentRoute: typeof MatchesMatchIdRoute
+    }
     '/matches/$matchId/map-farming': {
       id: '/matches/$matchId/map-farming'
       path: '/map-farming'
@@ -357,6 +400,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/matches/$matchId/timelines'
       preLoaderRoute: typeof MatchesMatchIdTimelinesRouteImport
       parentRoute: typeof MatchesMatchIdRoute
+    }
+    '/matches/$matchId/fights/': {
+      id: '/matches/$matchId/fights/'
+      path: '/'
+      fullPath: '/matches/$matchId/fights/'
+      preLoaderRoute: typeof MatchesMatchIdFightsIndexRouteImport
+      parentRoute: typeof MatchesMatchIdFightsRoute
+    }
+    '/matches/$matchId/fights/$fightId': {
+      id: '/matches/$matchId/fights/$fightId'
+      path: '/$fightId'
+      fullPath: '/matches/$matchId/fights/$fightId'
+      preLoaderRoute: typeof MatchesMatchIdFightsFightIdRouteImport
+      parentRoute: typeof MatchesMatchIdFightsRoute
     }
   }
 }
@@ -372,8 +429,22 @@ const HealthRouteChildren: HealthRouteChildren = {
 const HealthRouteWithChildren =
   HealthRoute._addFileChildren(HealthRouteChildren)
 
+interface MatchesMatchIdFightsRouteChildren {
+  MatchesMatchIdFightsFightIdRoute: typeof MatchesMatchIdFightsFightIdRoute
+  MatchesMatchIdFightsIndexRoute: typeof MatchesMatchIdFightsIndexRoute
+}
+
+const MatchesMatchIdFightsRouteChildren: MatchesMatchIdFightsRouteChildren = {
+  MatchesMatchIdFightsFightIdRoute: MatchesMatchIdFightsFightIdRoute,
+  MatchesMatchIdFightsIndexRoute: MatchesMatchIdFightsIndexRoute,
+}
+
+const MatchesMatchIdFightsRouteWithChildren =
+  MatchesMatchIdFightsRoute._addFileChildren(MatchesMatchIdFightsRouteChildren)
+
 interface MatchesMatchIdRouteChildren {
   MatchesMatchIdCombatRoute: typeof MatchesMatchIdCombatRoute
+  MatchesMatchIdFightsRoute: typeof MatchesMatchIdFightsRouteWithChildren
   MatchesMatchIdMapFarmingRoute: typeof MatchesMatchIdMapFarmingRoute
   MatchesMatchIdTimelinesRoute: typeof MatchesMatchIdTimelinesRoute
   MatchesMatchIdIndexRoute: typeof MatchesMatchIdIndexRoute
@@ -381,6 +452,7 @@ interface MatchesMatchIdRouteChildren {
 
 const MatchesMatchIdRouteChildren: MatchesMatchIdRouteChildren = {
   MatchesMatchIdCombatRoute: MatchesMatchIdCombatRoute,
+  MatchesMatchIdFightsRoute: MatchesMatchIdFightsRouteWithChildren,
   MatchesMatchIdMapFarmingRoute: MatchesMatchIdMapFarmingRoute,
   MatchesMatchIdTimelinesRoute: MatchesMatchIdTimelinesRoute,
   MatchesMatchIdIndexRoute: MatchesMatchIdIndexRoute,
